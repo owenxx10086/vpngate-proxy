@@ -109,5 +109,6 @@ def run_app():
     socketio.run(app, host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 if __name__ == "__main__":
-    manager.start()
+    import threading
+    threading.Thread(target=manager.start, daemon=True).start()
     run_app()
