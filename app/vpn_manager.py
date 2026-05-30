@@ -36,10 +36,10 @@ class VpnManager:
         self._bg_check_thread = None
         self._log_callback = None
         self.tun_dev = None
-        self.vpn_gateway = None          # 保存 VPN 网关（隧道对端）
+        self.vpn_gateway = None
         self.health_fail_count = 0
         self.max_health_fails = 3
-        self._available_nodes = []       # 确保属性存在
+        self._available_nodes = []
 
     def set_log_callback(self, cb):
         self._log_callback = cb
@@ -146,7 +146,6 @@ class VpnManager:
         return True
 
     def _get_tun_info(self):
-        """获取最新的 tun 接口 IP 和名称，返回 (ip, dev) 或 (None, None)"""
         try:
             result = subprocess.run(["ip", "addr", "show"], capture_output=True, text=True)
             matches = re.findall(r"(tun\d+):\s.*?\n\s+inet (\d+\.\d+\.\d+\.\d+)", result.stdout, re.DOTALL)
@@ -156,6 +155,25 @@ class VpnManager:
         except Exception:
             pass
         return None, None
+
+    def _add_route_to_gateway(self, gateway, dev):
+        """添加一条到网关的 /32 路由"""
+        if not gateway or not dev:
+            return
+        try:
+            subprocess.run(["ip", "route", "add", f"{gateway}/32", "dev", dev], check=True)
+            self.log(f"已添加路由: {gateway}/32 dev {dev}")
+        except subprocess.CalledProcessError as e:
+            self.log(f"添加路由失败: {e}")
+
+    def _del_route_to_gateway(self, gateway, dev):
+        """删除对应的路由"""
+        if not gateway or not dev:
+            return
+        try:
+            subprocess.run(["ip", "route", "del", f"{gateway}/32", "dev", dev], check=True)
+        except Exception:
+            pass
 
     def connect_node(self, node):
         self.disconnect()
@@ -175,7 +193,6 @@ class VpnManager:
 
         if "auth-user-pass" not in ovpn_content:
             ovpn_content += f"\nauth-user-pass {auth_path}\n"
-        # 使用 route-nopull 防止接管默认路由，但不影响 tun 接口本身
         ovpn_content += "\nroute-nopull\n"
         ovpn_content += "\ndata-ciphers AES-256-GCM:AES-128-GCM:AES-128-CBC:CHACHA20-POLY1305\n"
 
@@ -216,7 +233,6 @@ class VpnManager:
             if "Peer Connection Initiated" in line:
                 self.log("TLS 握手成功，等待配置...")
 
-            # 从 PUSH_REPLY 中提取 ifconfig 地址，第二个 IP 是网关
             if "PUSH: Received control message: 'PUSH_REPLY" in line:
                 match = re.search(r"ifconfig (\d+\.\d+\.\d+\.\d+) (\d+\.\d+\.\d+\.\d+)", line)
                 if match:
@@ -234,7 +250,6 @@ class VpnManager:
                     tun_ip = match.group(1)
                     self.log(f"从 OpenVPN 日志获取到 VPN IP: {tun_ip}")
 
-        # 确保获取到接口和 IP
         if connected_flag or tun_ip:
             self.log("正在从系统获取 VPN 接口信息...")
             ip, dev = self._get_tun_info()
@@ -253,6 +268,10 @@ class VpnManager:
         self.tun_dev = tun_dev
         self.vpn_gateway = vpn_gateway
         self.health_fail_count = 0
+
+        # **新增：添加路由到网关**
+        self._add_route_to_gateway(vpn_gateway, tun_dev)
+
         self.log(f"VPN 连接成功，本机 VPN IP: {tun_ip}, 接口: {tun_dev}, 网关: {vpn_gateway}")
 
         socks_bind = "0.0.0.0"
@@ -268,6 +287,10 @@ class VpnManager:
         return True
 
     def disconnect(self):
+        # **新增：删除之前添加的路由**
+        if self.vpn_gateway and self.tun_dev:
+            self._del_route_to_gateway(self.vpn_gateway, self.tun_dev)
+
         if self.vpn_process:
             self.log("断开当前连接...")
             try:
@@ -306,7 +329,6 @@ class VpnManager:
                 self.health_fail_count = 0
                 continue
 
-            # 优先 ping 网关 IP（对端），一定可达；如果没有则 ping 8.8.8.8
             target = self.vpn_gateway if self.vpn_gateway else "8.8.8.8"
             try:
                 ip_check = subprocess.run(
