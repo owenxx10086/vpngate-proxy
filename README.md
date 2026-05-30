@@ -39,7 +39,7 @@ vpngate-proxy/
 
 ### 前提条件
 
-- 一台 Linux 主机（或任何支持 Docker 的设备）
+- 一台 Linux 主机（或任何支持 Docker 的设备并安装了docker）
 - 需要暴露的端口未被占用（默认 `8080` 用于面板，`1080` 用于 SOCKS5）
 
 ### 使用预构建镜像（推荐）
@@ -47,7 +47,7 @@ vpngate-proxy/
 ```
 docker run -d --name vpn-proxy \
   --cap-add=NET_ADMIN --device=/dev/net/tun \
-  -p 5000:8080 -p 1080:1080 \
+  -p 8080:8080 -p 1080:1080 \
   -v ./data:/data \
   ghcr.io/xiaowen-king/vpngate-proxy:latest
 ```
@@ -65,6 +65,26 @@ docker run -d --name vpn-proxy \
   -v ./data:/data \
   vpngate-proxy
 ```
+
+### 使用docker-compose.yaml文件
+
+```
+services:
+  vpn-proxy:
+    image: ghcr.io/xiaowen-king/vpngate-proxy:latest
+    container_name: vpn-proxy
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    ports:
+      - "8080:8080"
+      - "1080:1080"
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+```
+
 ## ⚙️ 配置说明
 
 首次启动后，访问 http://你的主机IP:8080，使用默认密码 admin 登录。
