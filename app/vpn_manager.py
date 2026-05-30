@@ -35,6 +35,7 @@ class VpnManager:
         self._health_thread = None
         self._bg_check_thread = None
         self._log_callback = None
+        self.tun_dev = None        # 当前 VPN 接口名
 
     def set_log_callback(self, cb):
         self._log_callback = cb
@@ -140,17 +141,18 @@ class VpnManager:
     def test_node(self, node):
         return True
 
-    def _get_tun_ip(self):
-        """通过 ip addr 命令获取最新的 tun 接口 IP"""
+    def _get_tun_info(self):
+        """获取最新的 tun 接口 IP 和名称，返回 (ip, dev) 或 (None, None)"""
         try:
             result = subprocess.run(["ip", "addr", "show"], capture_output=True, text=True)
-            # 匹配所有 tun 接口的 inet 地址，取最后一个
-            matches = re.findall(r"tun\d+:\s.*?\n\s+inet (\d+\.\d+\.\d+\.\d+)", result.stdout, re.DOTALL)
+            # 匹配所有 tun 接口行及紧随的 inet 地址，取最后一个
+            matches = re.findall(r"(tun\d+):\s.*?\n\s+inet (\d+\.\d+\.\d+\.\d+)", result.stdout, re.DOTALL)
             if matches:
-                return matches[-1]
+                dev, ip = matches[-1]
+                return ip, dev
         except Exception:
             pass
-        return None
+        return None, None
 
     def connect_node(self, node):
         """连接到指定节点，返回 True 表示成功"""
@@ -194,6 +196,7 @@ class VpnManager:
 
         # 监控输出
         tun_ip = None
+        tun_dev = None
         connected_flag = False
         start_time = time.time()
         timeout = 25
@@ -219,24 +222,32 @@ class VpnManager:
                 self.log("OpenVPN 初始化完成")
                 break
 
+            # 直接从 net_addr_ptp_v4_add 提取 IP（可能没有接口名）
             if "net_addr_ptp_v4_add" in line:
                 match = re.search(r"net_addr_ptp_v4_add: (\d+\.\d+\.\d+\.\d+)", line)
                 if match:
                     tun_ip = match.group(1)
                     self.log(f"从 OpenVPN 日志获取到 VPN IP: {tun_ip}")
-                    break
+                    # 此时接口可能还没完全 up，继续循环直到完成
 
-        # 如果还没拿到 IP 但已连接，通过 ip addr 获取
-        if not tun_ip and connected_flag:
-            self.log("正在从系统获取 VPN IP...")
-            tun_ip = self._get_tun_ip()
-
-        if not tun_ip:
+        # 如果已有 IP 或连接成功，但还没拿到 IP，尝试从系统获取
+        if connected_flag or tun_ip:
+            self.log("正在从系统获取 VPN 接口信息...")
+            ip, dev = self._get_tun_info()
+            if ip:
+                tun_ip = ip
+                tun_dev = dev
+            else:
+                self.log("无法从系统获取 VPN IP")
+                self.disconnect()
+                return False
+        else:
             self.log("获取 VPN IP 失败，无法启动 SOCKS5 代理")
             self.disconnect()
             return False
 
-        self.log(f"VPN 连接成功，本机 VPN IP: {tun_ip}")
+        self.tun_dev = tun_dev
+        self.log(f"VPN 连接成功，本机 VPN IP: {tun_ip}, 接口: {tun_dev}")
 
         # 启动 SOCKS5 代理
         socks_bind = "0.0.0.0"
@@ -266,6 +277,7 @@ class VpnManager:
         if self.socks_server:
             self.socks_server.stop()
             self.socks_server = None
+        self.tun_dev = None
         self.status["connected"] = False
         self.status["node_info"] = {}
         self.status["socks"] = ""
@@ -284,18 +296,19 @@ class VpnManager:
     def health_check_loop(self):
         while not self._stop_event.is_set():
             time.sleep(10)
-            if not self.status["connected"]:
+            if not self.status["connected"] or not self.tun_dev:
                 continue
             try:
+                # 使用动态接口名
                 output = subprocess.run(
-                    ["ping", "-c", "1", "-W", "3", "-I", "tun0", "8.8.8.8"],
-                    capture_output=True, text=True
+                    ["ping", "-c", "1", "-W", "3", "-I", self.tun_dev, "8.8.8.8"],
+                    capture_output=True, text=True, timeout=5
                 )
                 if "1 received" not in output.stdout:
                     self.log("当前连接不可用，准备切换...")
                     self._switch_to_next_available()
-            except Exception:
-                self.log("健康检测异常")
+            except Exception as e:
+                self.log(f"健康检测异常: {str(e)}")
 
     def background_check_nodes(self):
         while not self._stop_event.is_set():
