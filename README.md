@@ -21,15 +21,15 @@
 ```
 vpngate-proxy/
 ├── .github/workflows/
-│ └── docker-build.yml # GitHub Actions 自动构建并推送镜像
+│ └── docker-build.yml            # GitHub Actions 自动构建并推送镜像
 ├── app/
-│ ├── app.py # Flask Web 服务 & API & WebSocket
-│ ├── config.py # 配置读写，首次运行自动生成 secret_key
-│ ├── vpn_manager.py # VPN 管理核心：节点获取、连接、健康检测、策略路由、SOCKS5
-│ ├── socks_server.py # 极简 SOCKS5 服务器，出口绑定 VPN IP
+│ ├── app.py                      # Flask Web 服务 & API & WebSocket
+│ ├── config.py                   # 配置读写，首次运行自动生成 secret_key
+│ ├── vpn_manager.py              # VPN 管理核心：节点获取、连接、健康检测、策略路由、SOCKS5
+│ ├── socks_server.py             # 极简 SOCKS5 服务器，出口绑定 VPN IP
 │ └── templates/
-│ ├── index.html # Web 控制面板（单页应用）
-│ └── login.html # 登录页
+│ ├── index.html                  # Web 控制面板（单页应用）
+│ └── login.html                  # 登录页
 ├── Dockerfile
 ├── requirements.txt
 └── README.md
