@@ -36,7 +36,7 @@ class VpnManager:
         self._bg_check_thread = None
         self._log_callback = None
         self.tun_dev = None
-        self.vpn_gateway = None
+        self.tun_ip = None
         self.health_fail_count = 0
         self.max_health_fails = 3
         self._available_nodes = []
@@ -146,6 +146,7 @@ class VpnManager:
         return True
 
     def _get_tun_info(self):
+        """获取最新的 tun 接口 IP 和名称"""
         try:
             result = subprocess.run(["ip", "addr", "show"], capture_output=True, text=True)
             matches = re.findall(r"(tun\d+):\s.*?\n\s+inet (\d+\.\d+\.\d+\.\d+)", result.stdout, re.DOTALL)
@@ -155,20 +156,6 @@ class VpnManager:
         except Exception:
             pass
         return None, None
-
-    def _remove_default_route(self, dev):
-        """删除通过指定接口的默认路由"""
-        try:
-            # 先检查是否存在
-            result = subprocess.run(
-                ["ip", "route", "show", "default", "dev", dev],
-                capture_output=True, text=True
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                subprocess.run(["ip", "route", "del", "default", "dev", dev], check=True)
-                self.log(f"已删除默认路由 dev {dev}")
-        except Exception as e:
-            self.log(f"删除默认路由失败: {e}")
 
     def connect_node(self, node):
         self.disconnect()
@@ -189,7 +176,8 @@ class VpnManager:
         if "auth-user-pass" not in ovpn_content:
             ovpn_content += f"\nauth-user-pass {auth_path}\n"
 
-        # 不再添加 route-nopull，让 OpenVPN 正常推送路由（包括默认路由）
+        # 关键：使用 route-nopull，彻底禁止 OpenVPN 修改路由表，不影响容器主网络
+        ovpn_content += "\nroute-nopull\n"
         ovpn_content += "\ndata-ciphers AES-256-GCM:AES-128-GCM:AES-128-CBC:CHACHA20-POLY1305\n"
 
         ovpn_path = "/tmp/vpn_config.ovpn"
@@ -208,7 +196,6 @@ class VpnManager:
 
         tun_ip = None
         tun_dev = None
-        vpn_gateway = None
         connected_flag = False
         start_time = time.time()
         timeout = 25
@@ -229,12 +216,6 @@ class VpnManager:
             if "Peer Connection Initiated" in line:
                 self.log("TLS 握手成功，等待配置...")
 
-            if "PUSH: Received control message: 'PUSH_REPLY" in line:
-                match = re.search(r"ifconfig (\d+\.\d+\.\d+\.\d+) (\d+\.\d+\.\d+\.\d+)", line)
-                if match:
-                    vpn_gateway = match.group(2)
-                    self.log(f"提取到 VPN 网关 IP: {vpn_gateway}")
-
             if "Initialization Sequence Completed" in line:
                 connected_flag = True
                 self.log("OpenVPN 初始化完成")
@@ -246,6 +227,7 @@ class VpnManager:
                     tun_ip = match.group(1)
                     self.log(f"从 OpenVPN 日志获取到 VPN IP: {tun_ip}")
 
+        # 获取最终接口信息
         if connected_flag or tun_ip:
             self.log("正在从系统获取 VPN 接口信息...")
             ip, dev = self._get_tun_info()
@@ -262,13 +244,10 @@ class VpnManager:
             return False
 
         self.tun_dev = tun_dev
-        self.vpn_gateway = vpn_gateway
+        self.tun_ip = tun_ip
         self.health_fail_count = 0
 
-        # 删除 OpenVPN 添加的默认路由，避免全局流量走 VPN
-        self._remove_default_route(tun_dev)
-
-        self.log(f"VPN 连接成功，本机 VPN IP: {tun_ip}, 接口: {tun_dev}, 网关: {vpn_gateway}")
+        self.log(f"VPN 连接成功，本机 VPN IP: {tun_ip}, 接口: {tun_dev}")
 
         socks_bind = "0.0.0.0"
         socks_port = self.config["socks_port"]
@@ -298,7 +277,7 @@ class VpnManager:
             self.socks_server.stop()
             self.socks_server = None
         self.tun_dev = None
-        self.vpn_gateway = None
+        self.tun_ip = None
         self.status["connected"] = False
         self.status["node_info"] = {}
         self.status["socks"] = ""
@@ -314,37 +293,37 @@ class VpnManager:
         except Exception:
             return "127.0.0.1"
 
+    def _is_tunnel_alive(self):
+        """检查隧道是否存活：进程存在 + 接口存在且有IP"""
+        if not self.vpn_process or self.vpn_process.poll() is not None:
+            return False
+        if not self.tun_dev or not self.tun_ip:
+            return False
+        # 检查接口是否仍存在且IP未变
+        try:
+            result = subprocess.run(
+                ["ip", "addr", "show", "dev", self.tun_dev],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode != 0 or self.tun_ip not in result.stdout:
+                return False
+        except Exception:
+            return False
+        return True
+
     def health_check_loop(self):
         while not self._stop_event.is_set():
             time.sleep(10)
-            if not self.status["connected"] or not self.tun_dev:
+            if not self.status["connected"]:
                 self.health_fail_count = 0
                 continue
 
-            # 直接 ping 网关，因为点对点路由必然存在
-            target = self.vpn_gateway if self.vpn_gateway else "8.8.8.8"
-            try:
-                ip_check = subprocess.run(
-                    ["ip", "addr", "show", "dev", self.tun_dev],
-                    capture_output=True, text=True, timeout=5
-                )
-                if ip_check.returncode != 0 or "inet" not in ip_check.stdout:
-                    self.log(f"接口 {self.tun_dev} 不存在，可能已断开")
-                    self.health_fail_count += 1
-                else:
-                    ping = subprocess.run(
-                        ["ping", "-c", "1", "-W", "3", "-I", self.tun_dev, target],
-                        capture_output=True, text=True, timeout=5
-                    )
-                    if "1 received" in ping.stdout:
-                        self.health_fail_count = 0
-                        self.log(f"健康检测成功: ping {target} 可达")
-                    else:
-                        self.log(f"Ping {target} 失败，隧道可能异常")
-                        self.health_fail_count += 1
-            except Exception as e:
-                self.log(f"健康检测异常: {str(e)}")
+            if self._is_tunnel_alive():
+                self.health_fail_count = 0
+                self.log("健康检测成功：OpenVPN 进程和 tun 接口正常")
+            else:
                 self.health_fail_count += 1
+                self.log(f"健康检测失败 (连续 {self.health_fail_count} 次)")
 
             if self.health_fail_count >= self.max_health_fails:
                 self.log(f"连续 {self.health_fail_count} 次健康检测失败，准备切换节点")
