@@ -35,7 +35,9 @@ class VpnManager:
         self._health_thread = None
         self._bg_check_thread = None
         self._log_callback = None
-        self.tun_dev = None        # 当前 VPN 接口名
+        self.tun_dev = None
+        self.health_fail_count = 0      # 连续健康检测失败计数
+        self.max_health_fails = 3       # 连续失败3次才切换
 
     def set_log_callback(self, cb):
         self._log_callback = cb
@@ -145,7 +147,6 @@ class VpnManager:
         """获取最新的 tun 接口 IP 和名称，返回 (ip, dev) 或 (None, None)"""
         try:
             result = subprocess.run(["ip", "addr", "show"], capture_output=True, text=True)
-            # 匹配所有 tun 接口行及紧随的 inet 地址，取最后一个
             matches = re.findall(r"(tun\d+):\s.*?\n\s+inet (\d+\.\d+\.\d+\.\d+)", result.stdout, re.DOTALL)
             if matches:
                 dev, ip = matches[-1]
@@ -155,12 +156,10 @@ class VpnManager:
         return None, None
 
     def connect_node(self, node):
-        """连接到指定节点，返回 True 表示成功"""
         self.disconnect()
         self.current_node = node
         self.log(f"正在连接到节点: {node['hostname']} ({node['ip']})")
 
-        # 解码 OpenVPN 配置
         try:
             config_b64 = node["openvpn_config_base64"]
             ovpn_content = base64.b64decode(config_b64).decode("utf-8")
@@ -168,12 +167,10 @@ class VpnManager:
             self.log("解码 OpenVPN 配置失败")
             return False
 
-        # 写入认证文件
         auth_path = "/tmp/vpn_auth.txt"
         with open(auth_path, "w") as f:
             f.write(f"{self.config['vpn_user']}\n{self.config['vpn_pass']}\n")
 
-        # 修改配置
         if "auth-user-pass" not in ovpn_content:
             ovpn_content += f"\nauth-user-pass {auth_path}\n"
         ovpn_content += "\nroute-nopull\n"
@@ -183,7 +180,6 @@ class VpnManager:
         with open(ovpn_path, "w") as f:
             f.write(ovpn_content)
 
-        # 启动 OpenVPN
         try:
             self.vpn_process = subprocess.Popen(
                 ["openvpn", "--config", ovpn_path],
@@ -194,7 +190,6 @@ class VpnManager:
             self.log(f"启动 OpenVPN 失败: {str(e)}")
             return False
 
-        # 监控输出
         tun_ip = None
         tun_dev = None
         connected_flag = False
@@ -222,15 +217,12 @@ class VpnManager:
                 self.log("OpenVPN 初始化完成")
                 break
 
-            # 直接从 net_addr_ptp_v4_add 提取 IP（可能没有接口名）
             if "net_addr_ptp_v4_add" in line:
                 match = re.search(r"net_addr_ptp_v4_add: (\d+\.\d+\.\d+\.\d+)", line)
                 if match:
                     tun_ip = match.group(1)
                     self.log(f"从 OpenVPN 日志获取到 VPN IP: {tun_ip}")
-                    # 此时接口可能还没完全 up，继续循环直到完成
 
-        # 如果已有 IP 或连接成功，但还没拿到 IP，尝试从系统获取
         if connected_flag or tun_ip:
             self.log("正在从系统获取 VPN 接口信息...")
             ip, dev = self._get_tun_info()
@@ -247,9 +239,9 @@ class VpnManager:
             return False
 
         self.tun_dev = tun_dev
+        self.health_fail_count = 0   # 重置失败计数
         self.log(f"VPN 连接成功，本机 VPN IP: {tun_ip}, 接口: {tun_dev}")
 
-        # 启动 SOCKS5 代理
         socks_bind = "0.0.0.0"
         socks_port = self.config["socks_port"]
         self.socks_server = Socks5Server(socks_bind, socks_port, tun_ip)
@@ -297,18 +289,37 @@ class VpnManager:
         while not self._stop_event.is_set():
             time.sleep(10)
             if not self.status["connected"] or not self.tun_dev:
+                self.health_fail_count = 0
                 continue
+
+            # 先检查接口是否存在
             try:
-                # 使用动态接口名
-                output = subprocess.run(
-                    ["ping", "-c", "1", "-W", "3", "-I", self.tun_dev, "8.8.8.8"],
+                ip_check = subprocess.run(
+                    ["ip", "addr", "show", "dev", self.tun_dev],
                     capture_output=True, text=True, timeout=5
                 )
-                if "1 received" not in output.stdout:
-                    self.log("当前连接不可用，准备切换...")
-                    self._switch_to_next_available()
+                if ip_check.returncode != 0 or "inet" not in ip_check.stdout:
+                    self.log(f"接口 {self.tun_dev} 不存在或没有 IP，可能已断开")
+                    self.health_fail_count += 1
+                else:
+                    # 尝试 ping 8.8.8.8
+                    ping = subprocess.run(
+                        ["ping", "-c", "1", "-W", "3", "-I", self.tun_dev, "8.8.8.8"],
+                        capture_output=True, text=True, timeout=5
+                    )
+                    if "1 received" in ping.stdout:
+                        self.health_fail_count = 0  # 成功一次就清零
+                    else:
+                        self.log(f"Ping 失败: {ping.stdout.strip()[-100:]}")
+                        self.health_fail_count += 1
             except Exception as e:
                 self.log(f"健康检测异常: {str(e)}")
+                self.health_fail_count += 1
+
+            if self.health_fail_count >= self.max_health_fails:
+                self.log(f"连续 {self.health_fail_count} 次健康检测失败，准备切换节点")
+                self._switch_to_next_available()
+                self.health_fail_count = 0
 
     def background_check_nodes(self):
         while not self._stop_event.is_set():
