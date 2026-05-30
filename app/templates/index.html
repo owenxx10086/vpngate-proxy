@@ -224,7 +224,7 @@
             if (navigator.clipboard && window.isSecureContext) {
                 navigator.clipboard.writeText(socks).then(() => {
                     btn.textContent = "✅ 已复制";
-                    setTimeout(() => { btn.textContent = "📋 复制"; }, 2000);
+                    setTimeout(() => { btn.textContent = "复制地址"; }, 2000);
                 }).catch(() => fallbackCopy(socks, btn));
             } else {
                 fallbackCopy(socks, btn);
