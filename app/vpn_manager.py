@@ -34,6 +34,7 @@ class VpnManager:
         self._stop_event = threading.Event()
         self._health_thread = None
         self._bg_check_thread = None
+        self._auto_update_thread = None   # 自动更新线程
         self._log_callback = None
         self.tun_dev = None
         self.tun_ip = None
@@ -103,6 +104,8 @@ class VpnManager:
                 })
             self.nodes = nodes
             self.log(f"获取到 {len(nodes)} 个节点")
+            # 通知前端节点已更新（特殊日志标记）
+            self.log("NODES_UPDATED")
         except Exception as e:
             self.log(f"获取节点列表失败: {str(e)}")
 
@@ -113,7 +116,6 @@ class VpnManager:
         return [n for n in nodes if (n.get("country_short") or "").upper() == region.upper()]
 
     def detect_ip(self, ip):
-        """使用 ip-api.com 检测 IP 信息"""
         try:
             url = f"http://ip-api.com/json/{ip}?fields=status,message,country,countryCode,region,regionName,city,isp,proxy,hosting,mobile,query"
             resp = requests.get(url, timeout=10)
@@ -362,6 +364,23 @@ class VpnManager:
             self._available_nodes = available
             self.log(f"当前可用节点: {len(available)} 个")
 
+    def _auto_update_loop(self):
+        """根据配置的间隔自动拉取节点列表"""
+        while not self._stop_event.is_set():
+            interval_min = self.config.get("auto_update_interval", 0)
+            if interval_min <= 0:
+                # 不自动更新，休眠 30 秒再检查配置
+                time.sleep(30)
+                continue
+            interval_sec = interval_min * 60
+            # 等待指定秒数，但每 5 秒检查一次 stop 事件
+            for _ in range(interval_sec // 5):
+                if self._stop_event.is_set():
+                    return
+                time.sleep(5)
+            if not self._stop_event.is_set():
+                self.fetch_nodes()
+
     def _switch_to_next_available(self):
         if self._available_nodes:
             next_node = self._available_nodes.pop(0)
@@ -405,6 +424,8 @@ class VpnManager:
         self._health_thread.start()
         self._bg_check_thread = threading.Thread(target=self.background_check_nodes, daemon=True)
         self._bg_check_thread.start()
+        self._auto_update_thread = threading.Thread(target=self._auto_update_loop, daemon=True)
+        self._auto_update_thread.start()
 
     def stop(self):
         self._stop_event.set()
