@@ -36,10 +36,10 @@ class VpnManager:
         self._bg_check_thread = None
         self._log_callback = None
         self.tun_dev = None
-        self.vpn_gateway = None            # 保存 VPN 网关 IP（隧道对端）
+        self.vpn_gateway = None          # 保存 VPN 网关（隧道对端）
         self.health_fail_count = 0
         self.max_health_fails = 3
-        self._available_nodes = []         # 确保属性存在
+        self._available_nodes = []       # 确保属性存在
 
     def set_log_callback(self, cb):
         self._log_callback = cb
@@ -175,10 +175,8 @@ class VpnManager:
 
         if "auth-user-pass" not in ovpn_content:
             ovpn_content += f"\nauth-user-pass {auth_path}\n"
-
-        # 放弃 route-nopull，改用 pull-filter 只忽略重定向网关和 DNS 推送
-        ovpn_content += "\npull-filter ignore redirect-gateway\n"
-        ovpn_content += "\npull-filter ignore dhcp-option DNS\n"
+        # 使用 route-nopull 防止接管默认路由，但不影响 tun 接口本身
+        ovpn_content += "\nroute-nopull\n"
         ovpn_content += "\ndata-ciphers AES-256-GCM:AES-128-GCM:AES-128-CBC:CHACHA20-POLY1305\n"
 
         ovpn_path = "/tmp/vpn_config.ovpn"
@@ -218,7 +216,7 @@ class VpnManager:
             if "Peer Connection Initiated" in line:
                 self.log("TLS 握手成功，等待配置...")
 
-            # 从推送的 ifconfig 行提取网关 IP（第二个 IP）
+            # 从 PUSH_REPLY 中提取 ifconfig 地址，第二个 IP 是网关
             if "PUSH: Received control message: 'PUSH_REPLY" in line:
                 match = re.search(r"ifconfig (\d+\.\d+\.\d+\.\d+) (\d+\.\d+\.\d+\.\d+)", line)
                 if match:
@@ -236,16 +234,7 @@ class VpnManager:
                     tun_ip = match.group(1)
                     self.log(f"从 OpenVPN 日志获取到 VPN IP: {tun_ip}")
 
-        # 如果还未拿到网关，尝试从系统接口对端获取
-        if not vpn_gateway:
-            self.log("未从推送中获取到网关，使用系统获取...")
-            ip_info = self._get_tun_info()
-            if ip_info:
-                tun_ip_temp, dev_temp = ip_info
-                # 根据 ifconfig 推送格式，网关通常是本机 IP 最后一位 +1，但不可靠
-                # 这里简单跳过，健康检测 ping 8.8.8.8 作为后备
-                pass
-
+        # 确保获取到接口和 IP
         if connected_flag or tun_ip:
             self.log("正在从系统获取 VPN 接口信息...")
             ip, dev = self._get_tun_info()
@@ -262,7 +251,7 @@ class VpnManager:
             return False
 
         self.tun_dev = tun_dev
-        self.vpn_gateway = vpn_gateway  # 可能为 None，健康检测会回退到 8.8.8.8
+        self.vpn_gateway = vpn_gateway
         self.health_fail_count = 0
         self.log(f"VPN 连接成功，本机 VPN IP: {tun_ip}, 接口: {tun_dev}, 网关: {vpn_gateway}")
 
@@ -317,10 +306,9 @@ class VpnManager:
                 self.health_fail_count = 0
                 continue
 
-            # 优先 ping 网关 IP，若无则 ping 8.8.8.8
+            # 优先 ping 网关 IP（对端），一定可达；如果没有则 ping 8.8.8.8
             target = self.vpn_gateway if self.vpn_gateway else "8.8.8.8"
             try:
-                # 检查接口是否存在
                 ip_check = subprocess.run(
                     ["ip", "addr", "show", "dev", self.tun_dev],
                     capture_output=True, text=True, timeout=5
@@ -337,7 +325,7 @@ class VpnManager:
                         self.health_fail_count = 0
                         self.log(f"健康检测成功: ping {target} 可达")
                     else:
-                        self.log(f"Ping {target} 失败: {ping.stdout.strip()[-100:]}")
+                        self.log(f"Ping {target} 失败，隧道可能异常")
                         self.health_fail_count += 1
             except Exception as e:
                 self.log(f"健康检测异常: {str(e)}")
