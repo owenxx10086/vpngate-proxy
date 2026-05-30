@@ -10,7 +10,9 @@ DEFAULT_CONFIG = {
     "web_port": 8080,
     "vpn_user": "vpn",
     "vpn_pass": "vpn",
-    "region": "all"          # 节点地区过滤，all 表示不过滤，可填国家代码如 JP
+    "region": "all",
+    "node_limit": 200,          # 节点列表返回最大数量
+    "check_limit": 20           # 后台检测节点最大数量
 }
 
 def load_config():
@@ -18,7 +20,6 @@ def load_config():
         return DEFAULT_CONFIG.copy()
     with open(CONFIG_PATH, "r", encoding="utf-8") as f:
         cfg = json.load(f)
-    # 合并默认值
     for k, v in DEFAULT_CONFIG.items():
         cfg.setdefault(k, v)
     return cfg
