@@ -100,7 +100,6 @@
                     </div>
                     <div class="mb-3"><label>节点数据上限</label><input type="number" class="form-control" id="cfg-node-limit" min="1" max="1000"></div>
                     <div class="mb-3"><label>检测数量上限</label><input type="number" class="form-control" id="cfg-check-limit" min="1" max="500"></div>
-                    <div class="mb-3"><label>自动更新间隔（分钟，0 为不自动）</label><input type="number" class="form-control" id="cfg-auto-update" min="0" max="1440"></div>
                     <button type="submit" class="btn btn-success">保存</button>
                     <button type="button" id="restart-btn" class="btn btn-danger ms-2">保存并重启服务</button>
                     <span id="settings-msg" class="ms-3"></span>
@@ -126,7 +125,7 @@
                     <p id="modal-status-text">正在连接...</p>
                     <div id="modal-log-panel" class="modal-log-area"></div>
                 </div>
-                <div class="modal-footer">
+                <div class="modal-footer" id="connectModalFooter">
                     <button type="button" class="btn btn-secondary" id="modal-cancel-btn">关闭</button>
                 </div>
             </div>
@@ -160,7 +159,6 @@
         let isRefreshing = false;
         let configRegion = "all";
 
-        // 统一弹窗
         function showMessage(title, message, type = "info") {
             document.getElementById("globalModalTitle").textContent = title;
             document.getElementById("globalModalBody").textContent = message;
@@ -180,16 +178,8 @@
             document.getElementById("confirmNo").onclick = () => { globalModal.hide(); callback(false); };
         }
 
-        // 日志监听
         socket.on("log", (data) => {
-            const rawMsg = data.message;
-            // 检测是否节点更新通知，不显示在日志中
-            if (rawMsg === "NODES_UPDATED") {
-                // 触发全量节点缓存更新
-                updateAllNodesCache();
-                return;
-            }
-            const msg = `<div>${rawMsg}</div>`;
+            const msg = `<div>${data.message}</div>`;
             logPanel.innerHTML += msg;
             logPanel.scrollTop = logPanel.scrollHeight;
             if (modalVisible) {
@@ -198,7 +188,6 @@
             }
         });
 
-        // 仪表盘状态更新
         async function updateStatus() {
             try {
                 const res = await fetch("/api/status");
@@ -222,7 +211,6 @@
         setInterval(updateStatus, 3000);
         updateStatus();
 
-        // 复制 SOCKS5
         document.getElementById("copy-socks-btn").addEventListener("click", () => {
             const socks = document.getElementById("socks-link").textContent;
             if (!socks || socks === "-") return;
@@ -254,7 +242,6 @@
             }
         }
 
-        // 构建地区选项 HTML（基于全量节点缓存）
         function buildRegionOptions(selectedVal = null) {
             const regions = new Set();
             allNodesCache.forEach(n => {
@@ -336,9 +323,7 @@
                     populateRegionFilter();
                     updateSettingsRegionDropdown();
                 }
-            } catch(e) {
-                console.error("更新全量节点缓存失败:", e);
-            }
+            } catch(e) { console.error(e); }
         }
 
         async function refreshNodes() {
@@ -350,18 +335,13 @@
             status.textContent = "刷新中...";
             const region = document.getElementById("region-filter").value;
             localStorage.setItem("selectedRegion", region);
-
             try {
                 const res = await fetch(`/api/nodes?region=${encodeURIComponent(region)}`);
-                if (!res.ok) {
-                    const errData = await res.json().catch(() => ({}));
-                    throw new Error(errData.error || `HTTP ${res.status}`);
-                }
+                if (!res.ok) throw new Error((await res.json().catch(()=>{})).error || `HTTP ${res.status}`);
                 const nodes = await res.json();
                 displayedNodes = nodes;
                 renderNodeTable(nodes);
                 updateStats(nodes);
-
                 if (region !== "all") {
                     await updateAllNodesCache();
                 } else {
@@ -381,11 +361,9 @@
             }
         }
 
-        document.getElementById("region-filter").addEventListener("change", () => {
-            refreshNodes();
-        });
+        document.getElementById("region-filter").addEventListener("change", refreshNodes);
 
-        // 连接节点逻辑
+        // ---------- 连接节点（优化：重试耗尽后自动使用默认地区连接） ----------
         async function connectNode(ip, depth = 0) {
             if (isConnecting && depth === 0) return;
             const MAX_RETRIES = 3;
@@ -417,10 +395,7 @@
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ ip })
                 });
-                if (!res.ok) {
-                    const errData = await res.json().catch(() => ({}));
-                    throw new Error(errData.error || `HTTP ${res.status}`);
-                }
+                if (!res.ok) throw new Error((await res.json().catch(()=>{})).error || `HTTP ${res.status}`);
                 const data = await res.json();
                 if (data.success) {
                     document.getElementById("modal-status-text").textContent = `✅ 已成功连接到 ${ip}`;
@@ -441,13 +416,29 @@
                         return;
                     }
                 }
-                document.getElementById("modal-status-text").textContent += " 请手动刷新列表后重试。";
+                // 所有重试已用完
+                document.getElementById("modal-status-text").textContent += " 所有尝试均失败。";
+                // 自动尝试使用默认地区连接一次
+                document.getElementById("modal-status-text").textContent += " 正在尝试使用默认连接地区自动连接...";
+                try {
+                    const autoRes = await fetch("/api/auto_connect", { method: "POST" });
+                    const autoData = await autoRes.json();
+                    if (autoData.success) {
+                        document.getElementById("modal-status-text").textContent += ` ✅ 已自动连接节点 ${autoData.node}`;
+                        updateStatus();
+                    } else {
+                        document.getElementById("modal-status-text").textContent += ` 自动连接失败: ${autoData.error || "未知错误"}`;
+                    }
+                } catch(autoErr) {
+                    document.getElementById("modal-status-text").textContent += ` 自动连接请求失败: ${autoErr.message}`;
+                }
                 document.getElementById("modal-cancel-btn").style.display = "inline-block";
                 document.getElementById("modal-close-btn").style.display = "inline-block";
             } finally {
                 if (depth === MAX_RETRIES - 1 || !allNodesCache.some(n => n.ip !== ip && !sessionStorage.getItem("failed_"+n.ip))) {
                     setConnecting(false);
                     modalVisible = false;
+                    // 确保按钮可见
                     document.getElementById("modal-cancel-btn").style.display = "inline-block";
                     document.getElementById("modal-close-btn").style.display = "inline-block";
                 }
@@ -467,7 +458,6 @@
                 if (ip) connectNode(ip);
             }
         });
-
         document.getElementById("refresh-btn").addEventListener("click", refreshNodes);
         document.getElementById("modal-cancel-btn").addEventListener("click", closeModal);
         document.getElementById("modal-close-btn").addEventListener("click", closeModal);
@@ -480,20 +470,18 @@
                     const res = await fetch("/api/disconnect", { method: "POST" });
                     const data = await res.json();
                     if (data.success) { updateStatus(); showMessage("操作成功", "已断开连接", "success"); }
-                    else { showMessage("操作失败", "断开失败", "danger"); }
+                    else showMessage("操作失败", "断开失败", "danger");
                 } catch(e) { showMessage("请求失败", e.message, "danger"); }
             });
         });
-
         document.getElementById("connect-btn").addEventListener("click", async () => {
             try {
                 const res = await fetch("/api/auto_connect", { method: "POST" });
                 const data = await res.json();
                 if (data.success) { updateStatus(); showMessage("连接请求已发送", `正在连接节点 ${data.node}，请查看日志`, "info"); }
-                else { showMessage("连接失败", data.error || "未知错误", "danger"); }
+                else showMessage("连接失败", data.error || "未知错误", "danger");
             } catch(e) { showMessage("请求失败", e.message, "danger"); }
         });
-
         document.getElementById("reconnect-btn").addEventListener("click", () => {
             showConfirm("重新连接", "确定要重新连接吗？", async (confirmed) => {
                 if (!confirmed) return;
@@ -503,13 +491,13 @@
                         const res = await fetch("/api/auto_connect", { method: "POST" });
                         const data = await res.json();
                         if (data.success) { updateStatus(); showMessage("重新连接成功", `已重新连接到 ${data.node}`, "success"); }
-                        else { showMessage("重新连接失败", data.error || "未知错误", "danger"); }
+                        else showMessage("重新连接失败", data.error || "未知错误", "danger");
                     }, 1500);
                 } catch(e) { showMessage("断开失败", e.message, "danger"); }
             });
         });
 
-        // 保存并重启
+        // 保存并重启按钮
         document.getElementById("restart-btn").addEventListener("click", () => {
             showConfirm("保存并重启服务", "将保存当前设置并重启服务，确定继续？", async (confirmed) => {
                 if (!confirmed) return;
@@ -522,8 +510,7 @@
                     vpn_pass: document.getElementById("cfg-vpn-pass").value,
                     region: document.getElementById("cfg-region").value,
                     node_limit: parseInt(document.getElementById("cfg-node-limit").value),
-                    check_limit: parseInt(document.getElementById("cfg-check-limit").value),
-                    auto_update_interval: parseInt(document.getElementById("cfg-auto-update").value) || 0
+                    check_limit: parseInt(document.getElementById("cfg-check-limit").value)
                 };
                 try {
                     const saveRes = await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(newCfg) });
@@ -532,12 +519,11 @@
                     const restartRes = await fetch("/api/restart", { method: "POST" });
                     const restartData = await restartRes.json();
                     if (restartData.success) { showMessage("重启中", "设置已保存，服务正在重启，页面即将刷新", "info"); setTimeout(() => location.reload(), 3000); }
-                    else { showMessage("重启失败", restartData.error || "未知错误", "danger"); }
+                    else showMessage("重启失败", restartData.error || "未知错误", "danger");
                 } catch(e) { showMessage("请求失败", e.message, "danger"); }
             });
         });
 
-        // 加载设置
         async function loadSettings() {
             try {
                 const res = await fetch("/api/config");
@@ -550,17 +536,12 @@
                 document.getElementById("cfg-vpn-pass").value = cfg.vpn_pass || "";
                 document.getElementById("cfg-node-limit").value = cfg.node_limit || 200;
                 document.getElementById("cfg-check-limit").value = cfg.check_limit || 20;
-                document.getElementById("cfg-auto-update").value = cfg.auto_update_interval || 0;
                 configRegion = cfg.region || "all";
-                if (allNodesCache.length > 0) {
-                    updateSettingsRegionDropdown();
-                } else {
-                    updateCurrentRegionText();
-                }
-            } catch(e) { console.error("加载设置失败", e); }
+                if (allNodesCache.length > 0) updateSettingsRegionDropdown();
+                else updateCurrentRegionText();
+            } catch(e) { console.error(e); }
         }
 
-        // 普通保存
         document.getElementById("settings-form").addEventListener("submit", async (e) => {
             e.preventDefault();
             const newCfg = {
@@ -572,8 +553,7 @@
                 vpn_pass: document.getElementById("cfg-vpn-pass").value,
                 region: document.getElementById("cfg-region").value,
                 node_limit: parseInt(document.getElementById("cfg-node-limit").value),
-                check_limit: parseInt(document.getElementById("cfg-check-limit").value),
-                auto_update_interval: parseInt(document.getElementById("cfg-auto-update").value) || 0
+                check_limit: parseInt(document.getElementById("cfg-check-limit").value)
             };
             const msg = document.getElementById("settings-msg");
             try {
@@ -588,7 +568,7 @@
                     msg.textContent = "保存失败: " + (data.error || "未知错误");
                     msg.className = "ms-3 text-danger";
                 }
-            } catch (err) {
+            } catch(err) {
                 msg.textContent = "请求失败: " + err.message;
                 msg.className = "ms-3 text-danger";
             }
@@ -607,12 +587,9 @@
             }
         }
 
-        // 页面初始化
         document.addEventListener("DOMContentLoaded", () => {
             loadSettings();
-            updateAllNodesCache().then(() => {
-                refreshNodes();
-            });
+            updateAllNodesCache().then(() => refreshNodes());
             loadSystemInfo();
         });
     </script>
