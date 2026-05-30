@@ -163,7 +163,7 @@
         let displayedNodes = [];
         let isRefreshing = false;
         let configRegion = "all";
-        let fetchIntervalTimer = null;   // 定时器句柄
+        let fetchIntervalTimer = null;
 
         function showMessage(title, message, type = "info") {
             document.getElementById("globalModalTitle").textContent = title;
@@ -223,7 +223,7 @@
             const btn = document.getElementById("copy-socks-btn");
             if (navigator.clipboard && window.isSecureContext) {
                 navigator.clipboard.writeText(socks).then(() => {
-                    btn.textContent = "✅ 已复制";
+                    btn.textContent = "复制成功";
                     setTimeout(() => { btn.textContent = "复制地址"; }, 2000);
                 }).catch(() => fallbackCopy(socks, btn));
             } else {
@@ -239,12 +239,12 @@
             textarea.select();
             try {
                 document.execCommand("copy");
-                btn.textContent = "✅ 已复制";
+                btn.textContent = "复制成功";
             } catch (err) {
                 showMessage("复制失败", "请手动复制：" + text, "danger");
             } finally {
                 document.body.removeChild(textarea);
-                setTimeout(() => { btn.textContent = "📋 复制"; }, 2000);
+                setTimeout(() => { btn.textContent = "复制地址"; }, 2000);
             }
         }
 
@@ -332,7 +332,6 @@
             } catch(e) { console.error(e); }
         }
 
-        // ---------- 自动刷新定时器 ----------
         function stopFetchTimer() {
             if (fetchIntervalTimer) {
                 clearInterval(fetchIntervalTimer);
@@ -477,7 +476,6 @@
                 if (depth === MAX_RETRIES - 1 || !allNodesCache.some(n => n.ip !== ip && !sessionStorage.getItem("failed_"+n.ip))) {
                     setConnecting(false);
                     modalVisible = false;
-                    // 确保按钮可见
                     document.getElementById("modal-cancel-btn").style.display = "inline-block";
                     document.getElementById("modal-close-btn").style.display = "inline-block";
                 }
@@ -536,7 +534,7 @@
             });
         });
 
-        // 保存并重启按钮（需包含 auto_update_interval）
+        // 保存并重启按钮（含 auto_update_interval）
         document.getElementById("restart-btn").addEventListener("click", () => {
             showConfirm("保存并重启服务", "将保存当前设置并重启服务，确定继续？", async (confirmed) => {
                 if (!confirmed) return;
@@ -580,7 +578,6 @@
                 configRegion = cfg.region || "all";
                 if (allNodesCache.length > 0) updateSettingsRegionDropdown();
                 else updateCurrentRegionText();
-                // 启动自动刷新定时器
                 startFetchTimer(cfg.auto_update_interval || 0);
             } catch(e) { console.error(e); }
         }
@@ -606,7 +603,6 @@
                 if (data.success) {
                     configRegion = newCfg.region;
                     updateCurrentRegionText();
-                    // 更新定时器
                     const interval = parseInt(document.getElementById("cfg-auto-update-interval").value) || 0;
                     startFetchTimer(interval);
                     msg.textContent = data.restart_needed ? "保存成功，部分设置需重启容器生效" : "保存成功";
@@ -634,10 +630,22 @@
             }
         }
 
+        // ---------- 监听标签页切换：当切换到节点列表时自动刷新 ----------
         document.addEventListener("DOMContentLoaded", () => {
             loadSettings();
             updateAllNodesCache().then(() => refreshNodes());
             loadSystemInfo();
+
+            // 监听标签页切换事件 (Bootstrap 5)
+            document.querySelectorAll('#mainTab button[data-bs-toggle="tab"]').forEach(tabEl => {
+                tabEl.addEventListener('shown.bs.tab', (event) => {
+                    const targetId = event.target.getAttribute('data-bs-target');
+                    if (targetId === '#nodes') {
+                        // 切换到节点列表页时，使用当前选择的地区刷新表格
+                        refreshNodes();
+                    }
+                });
+            });
         });
     </script>
 </body>
