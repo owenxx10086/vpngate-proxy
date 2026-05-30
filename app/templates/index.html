@@ -10,6 +10,7 @@
     <style>
         .log-area { height: 640px; overflow-y: auto; background: #222; color: #0f0; font-family: monospace; padding: 10px; }
         .status-card { margin-bottom: 15px; }
+        .modal-log-area { height: 200px; overflow-y: auto; background: #1e1e1e; color: #0f0; font-family: monospace; padding: 10px; font-size: 0.85rem; }
     </style>
 </head>
 <body>
@@ -28,6 +29,7 @@
             <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#settings">设置</button></li>
         </ul>
         <div class="tab-content mt-3">
+            <!-- 仪表盘 -->
             <div class="tab-pane fade show active" id="dashboard">
                 <div class="row">
                     <div class="col-md-6">
@@ -38,7 +40,11 @@
                                 <p><strong>节点：</strong><span id="node-name">-</span></p>
                                 <p><strong>IP：</strong><span id="node-ip">-</span></p>
                                 <p><strong>归属地：</strong><span id="node-location">-</span></p>
-                                <p><strong>SOCKS5：</strong><code id="socks-link">-</code></p>
+                                <p>
+                                    <strong>SOCKS5：</strong>
+                                    <code id="socks-link">-</code>
+                                    <button id="copy-socks-btn" class="btn btn-sm btn-outline-secondary ms-2" title="复制地址" disabled>📋 复制</button>
+                                </p>
                             </div>
                         </div>
                         <div class="card status-card">
@@ -56,6 +62,7 @@
                     </div>
                 </div>
             </div>
+            <!-- 节点列表 -->
             <div class="tab-pane fade" id="nodes">
                 <div class="mb-3">
                     <select id="region-filter" class="form-select w-auto d-inline">
@@ -68,8 +75,8 @@
                     <thead><tr><th>国家</th><th>IP</th><th>速率</th><th>会话数</th><th>操作</th></tr></thead>
                     <tbody id="node-table"></tbody>
                 </table>
-                <div id="connection-status" class="alert alert-info" style="display:none;"></div>
             </div>
+            <!-- 设置 -->
             <div class="tab-pane fade" id="settings">
                 <form id="settings-form">
                     <div class="mb-3"><label>面板密码</label><input type="password" class="form-control" id="cfg-password"></div>
@@ -86,15 +93,48 @@
         </div>
     </div>
 
+    <!-- 连接进度模态框 -->
+    <div class="modal fade" id="connectModal" tabindex="-1" aria-labelledby="connectModalLabel" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="connectModalLabel">连接节点</h5>
+                    <button type="button" class="btn-close" id="modal-close-btn" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p id="modal-status-text">正在连接...</p>
+                    <div id="modal-log-panel" class="modal-log-area"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" id="modal-cancel-btn">关闭</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script>
         const socket = io();
         const logPanel = document.getElementById("log-panel");
+        const modalLogPanel = document.getElementById("modal-log-panel");
+        const connectModal = new bootstrap.Modal(document.getElementById("connectModal"));
+        let isConnecting = false;
+        let currentConnectIp = null;
+        let modalVisible = false;
+
+        // 日志输出到主面板和模态框（如果可见）
         socket.on("log", (data) => {
-            logPanel.innerHTML += `<div>${data.message}</div>`;
+            const msg = `<div>${data.message}</div>`;
+            logPanel.innerHTML += msg;
             logPanel.scrollTop = logPanel.scrollHeight;
+
+            // 同时输出到模态框日志区
+            if (modalVisible) {
+                modalLogPanel.innerHTML += msg;
+                modalLogPanel.scrollTop = modalLogPanel.scrollHeight;
+            }
         });
 
-        // 仪表盘状态刷新
+        // 更新仪表盘状态
         async function updateStatus() {
             try {
                 const res = await fetch("/api/status");
@@ -103,7 +143,14 @@
                 document.getElementById("node-name").textContent = data.node_info?.hostname || "-";
                 document.getElementById("node-ip").textContent = data.node_info?.ip || "-";
                 document.getElementById("node-location").textContent = data.node_info?.country_long || "-";
-                document.getElementById("socks-link").textContent = data.socks || "-";
+                const socksLink = data.socks || "-";
+                document.getElementById("socks-link").textContent = socksLink;
+                const copyBtn = document.getElementById("copy-socks-btn");
+                if (data.connected && socksLink !== "-") {
+                    copyBtn.disabled = false;
+                } else {
+                    copyBtn.disabled = true;
+                }
                 const ipInfo = document.getElementById("ip-info");
                 if (data.ip_info && Object.keys(data.ip_info).length > 0) {
                     ipInfo.innerHTML = Object.entries(data.ip_info).map(([k,v]) => `<p><strong>${k}:</strong> ${v}</p>`).join("");
@@ -115,10 +162,24 @@
         setInterval(updateStatus, 3000);
         updateStatus();
 
-        // 节点列表相关
+        // 复制 SOCKS5 地址
+        document.getElementById("copy-socks-btn").addEventListener("click", async () => {
+            const socks = document.getElementById("socks-link").textContent;
+            if (!socks || socks === "-") return;
+            try {
+                await navigator.clipboard.writeText(socks);
+                // 简单的反馈
+                const btn = document.getElementById("copy-socks-btn");
+                btn.textContent = "✅ 已复制";
+                setTimeout(() => { btn.textContent = "📋 复制"; }, 2000);
+            } catch (err) {
+                alert("复制失败，请手动复制");
+            }
+        });
+
+        // ---------- 节点列表逻辑 ----------
         let allNodes = [];
         let isRefreshing = false;
-        let isConnecting = false;
 
         function populateRegionFilter(nodes) {
             const select = document.getElementById("region-filter");
@@ -153,16 +214,11 @@
             tbody.innerHTML = html || "<tr><td colspan='5'>无节点数据</td></tr>";
         }
 
-        // 更新按钮状态
         function setConnecting(state) {
             isConnecting = state;
             document.querySelectorAll(".connect-btn").forEach(btn => {
                 btn.disabled = state;
             });
-            const statusDiv = document.getElementById("connection-status");
-            if (!state) {
-                statusDiv.style.display = "none";
-            }
         }
 
         async function refreshNodes() {
@@ -199,15 +255,20 @@
             }
         }
 
-        // 手动连接节点，支持失败自动尝试下一个
+        // 手动连接节点（带模态框）
         async function connectNode(ip, depth = 0) {
             if (isConnecting) return;
             const MAX_RETRIES = 3;
-            const statusDiv = document.getElementById("connection-status");
             setConnecting(true);
-            statusDiv.style.display = "block";
-            statusDiv.className = "alert alert-info";
-            statusDiv.textContent = `正在连接 ${ip} ...`;
+            currentConnectIp = ip;
+
+            // 打开模态框
+            modalVisible = true;
+            document.getElementById("modal-status-text").textContent = `正在连接 ${ip} ...`;
+            document.getElementById("modal-log-panel").innerHTML = "";
+            document.getElementById("modal-close-btn").style.display = "none"; // 连接中不可关闭
+            document.getElementById("modal-cancel-btn").style.display = "none";
+            connectModal.show();
 
             try {
                 const res = await fetch("/api/connect", {
@@ -221,54 +282,67 @@
                 }
                 const data = await res.json();
                 if (data.success) {
-                    statusDiv.className = "alert alert-success";
-                    statusDiv.textContent = `已成功连接到 ${ip}`;
-                    setTimeout(() => { statusDiv.style.display = "none"; setConnecting(false); }, 2000);
+                    document.getElementById("modal-status-text").textContent = `✅ 已成功连接到 ${ip}`;
+                    setTimeout(closeModal, 2000);
                     updateStatus();
-                    return;
                 } else {
                     throw new Error(data.error || "连接失败");
                 }
             } catch(e) {
-                statusDiv.className = "alert alert-danger";
-                statusDiv.textContent = `连接 ${ip} 失败: ${e.message}`;
+                document.getElementById("modal-status-text").textContent = `❌ 连接 ${ip} 失败: ${e.message}`;
                 if (depth < MAX_RETRIES - 1) {
-                    // 尝试自动连接下一个节点（跳过当前 IP 以及已失败的 IP）
                     const nextNode = allNodes.find(n => n.ip !== ip && !sessionStorage.getItem("failed_"+n.ip));
                     if (nextNode) {
                         sessionStorage.setItem("failed_"+ip, "1");
-                        statusDiv.textContent += "，正在自动尝试下一个节点...";
-                        setTimeout(() => connectNode(nextNode.ip, depth+1), 1000);
-                    } else {
-                        statusDiv.textContent += "，且没有更多可用节点，请手动刷新列表。";
-                        setConnecting(false);
+                        document.getElementById("modal-status-text").textContent += "，正在自动尝试下一个节点...";
+                        setTimeout(() => connectNode(nextNode.ip, depth+1), 1500);
+                        return;
                     }
-                } else {
-                    statusDiv.textContent += "，已达到最大尝试次数，请手动刷新列表后重试。";
-                    setConnecting(false);
-                    // 清除失败标记
-                    sessionStorage.clear();
                 }
+                document.getElementById("modal-status-text").textContent += " 请手动刷新列表后重试。";
+                // 显示关闭按钮
+                document.getElementById("modal-cancel-btn").style.display = "inline-block";
+                document.getElementById("modal-close-btn").style.display = "inline-block";
+            } finally {
+                if (!isConnecting) return; // 如果是自动重试，保持连接状态
+                setConnecting(false);
+                modalVisible = false;
+                // 如果模态框还在显示，显示关闭按钮
+                document.getElementById("modal-cancel-btn").style.display = "inline-block";
+                document.getElementById("modal-close-btn").style.display = "inline-block";
             }
         }
 
-        // 给连接按钮绑定事件（事件委托）
+        function closeModal() {
+            connectModal.hide();
+            modalVisible = false;
+            setConnecting(false);
+            sessionStorage.clear(); // 清除失败标记
+        }
+
+        // 事件委托：连接按钮
         document.getElementById("node-table").addEventListener("click", (e) => {
             if (e.target.classList.contains("connect-btn")) {
                 const ip = e.target.getAttribute("data-ip");
-                if (ip) connectNode(ip);
+                if (ip) {
+                    connectNode(ip);
+                }
             }
         });
 
-        // 刷新按钮绑定事件
+        // 刷新按钮
         document.getElementById("refresh-btn").addEventListener("click", refreshNodes);
 
-        // 页面加载时获取节点列表
+        // 模态框关闭按钮（手动关闭）
+        document.getElementById("modal-cancel-btn").addEventListener("click", closeModal);
+        document.getElementById("modal-close-btn").addEventListener("click", closeModal);
+
+        // 初次加载
         document.addEventListener("DOMContentLoaded", () => {
             refreshNodes();
         });
 
-        // 设置页
+        // ---------- 设置页 ----------
         async function loadSettings() {
             const res = await fetch("/api/config");
             const cfg = await res.json();
