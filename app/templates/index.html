@@ -8,7 +8,7 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <style>
-        .log-area { height: 640px; overflow-y: auto; background: #222; color: #0f0; font-family: monospace; padding: 10px; }
+        .log-area { height: 300px; overflow-y: auto; background: #222; color: #0f0; font-family: monospace; padding: 10px; }
         .status-card { margin-bottom: 15px; }
         .modal-log-area { height: 200px; overflow-y: auto; background: #1e1e1e; color: #0f0; font-family: monospace; padding: 10px; font-size: 0.85rem; }
     </style>
@@ -118,16 +118,15 @@
         const modalLogPanel = document.getElementById("modal-log-panel");
         const connectModal = new bootstrap.Modal(document.getElementById("connectModal"));
         let isConnecting = false;
-        let currentConnectIp = null;
         let modalVisible = false;
 
-        // 日志输出到主面板和模态框（如果可见）
+        // 全局日志输出
         socket.on("log", (data) => {
             const msg = `<div>${data.message}</div>`;
             logPanel.innerHTML += msg;
             logPanel.scrollTop = logPanel.scrollHeight;
 
-            // 同时输出到模态框日志区
+            // 同步到模态框（如果可见）
             if (modalVisible) {
                 modalLogPanel.innerHTML += msg;
                 modalLogPanel.scrollTop = modalLogPanel.scrollHeight;
@@ -146,11 +145,7 @@
                 const socksLink = data.socks || "-";
                 document.getElementById("socks-link").textContent = socksLink;
                 const copyBtn = document.getElementById("copy-socks-btn");
-                if (data.connected && socksLink !== "-") {
-                    copyBtn.disabled = false;
-                } else {
-                    copyBtn.disabled = true;
-                }
+                copyBtn.disabled = !(data.connected && socksLink !== "-");
                 const ipInfo = document.getElementById("ip-info");
                 if (data.ip_info && Object.keys(data.ip_info).length > 0) {
                     ipInfo.innerHTML = Object.entries(data.ip_info).map(([k,v]) => `<p><strong>${k}:</strong> ${v}</p>`).join("");
@@ -162,22 +157,44 @@
         setInterval(updateStatus, 3000);
         updateStatus();
 
-        // 复制 SOCKS5 地址
-        document.getElementById("copy-socks-btn").addEventListener("click", async () => {
+        // 复制 SOCKS5（兼容 HTTP 环境）
+        document.getElementById("copy-socks-btn").addEventListener("click", () => {
             const socks = document.getElementById("socks-link").textContent;
             if (!socks || socks === "-") return;
-            try {
-                await navigator.clipboard.writeText(socks);
-                // 简单的反馈
-                const btn = document.getElementById("copy-socks-btn");
-                btn.textContent = "✅ 已复制";
-                setTimeout(() => { btn.textContent = "📋 复制"; }, 2000);
-            } catch (err) {
-                alert("复制失败，请手动复制");
+            const btn = document.getElementById("copy-socks-btn");
+
+            // 优先使用 Clipboard API
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(socks).then(() => {
+                    btn.textContent = "✅ 已复制";
+                    setTimeout(() => { btn.textContent = "📋 复制"; }, 2000);
+                }).catch(() => {
+                    fallbackCopy(socks, btn);
+                });
+            } else {
+                fallbackCopy(socks, btn);
             }
         });
 
-        // ---------- 节点列表逻辑 ----------
+        function fallbackCopy(text, btn) {
+            const textarea = document.createElement("textarea");
+            textarea.value = text;
+            textarea.style.position = "fixed";
+            textarea.style.opacity = 0;
+            document.body.appendChild(textarea);
+            textarea.select();
+            try {
+                document.execCommand("copy");
+                btn.textContent = "✅ 已复制";
+            } catch (err) {
+                alert("复制失败，请手动复制：" + text);
+            } finally {
+                document.body.removeChild(textarea);
+                setTimeout(() => { btn.textContent = "📋 复制"; }, 2000);
+            }
+        }
+
+        // ---------- 节点列表 ----------
         let allNodes = [];
         let isRefreshing = false;
 
@@ -255,20 +272,35 @@
             }
         }
 
-        // 手动连接节点（带模态框）
+        // 手动连接节点（带模态框，支持自动重试）
         async function connectNode(ip, depth = 0) {
             if (isConnecting) return;
             const MAX_RETRIES = 3;
             setConnecting(true);
             currentConnectIp = ip;
 
-            // 打开模态框
-            modalVisible = true;
-            document.getElementById("modal-status-text").textContent = `正在连接 ${ip} ...`;
-            document.getElementById("modal-log-panel").innerHTML = "";
-            document.getElementById("modal-close-btn").style.display = "none"; // 连接中不可关闭
-            document.getElementById("modal-cancel-btn").style.display = "none";
-            connectModal.show();
+            // 如果 depth > 0，说明是自动重试，清空模态框日志区，并插入提示
+            if (depth === 0) {
+                modalVisible = true;
+                document.getElementById("modal-status-text").textContent = `正在连接 ${ip} ...`;
+                document.getElementById("modal-log-panel").innerHTML = "";
+                document.getElementById("modal-close-btn").style.display = "none";
+                document.getElementById("modal-cancel-btn").style.display = "none";
+                connectModal.show();
+            } else {
+                // 自动重试：在主日志和模态框日志中添加醒目提示
+                const tip = `>>> 连接失败，自动尝试下一个节点 (${ip}) ...`;
+                logPanel.innerHTML += `<div style="color: #ff0;">${tip}</div>`;
+                logPanel.scrollTop = logPanel.scrollHeight;
+                if (modalVisible) {
+                    modalLogPanel.innerHTML += `<div style="color: #ff0;">${tip}</div>`;
+                    modalLogPanel.scrollTop = modalLogPanel.scrollHeight;
+                }
+                document.getElementById("modal-status-text").textContent = `正在连接 ${ip} (第${depth+1}次尝试)...`;
+                // 清空模态框日志区，准备接收新节点的连接日志
+                modalLogPanel.innerHTML = `<div style="color: #ff0;">${tip}</div>`;
+                modalLogPanel.scrollTop = modalLogPanel.scrollHeight;
+            }
 
             try {
                 const res = await fetch("/api/connect", {
@@ -304,12 +336,14 @@
                 document.getElementById("modal-cancel-btn").style.display = "inline-block";
                 document.getElementById("modal-close-btn").style.display = "inline-block";
             } finally {
-                if (!isConnecting) return; // 如果是自动重试，保持连接状态
-                setConnecting(false);
-                modalVisible = false;
-                // 如果模态框还在显示，显示关闭按钮
-                document.getElementById("modal-cancel-btn").style.display = "inline-block";
-                document.getElementById("modal-close-btn").style.display = "inline-block";
+                if (!isConnecting) return;
+                // 如果是自动重试，setConnecting 保持 true，否则放开
+                if (depth === MAX_RETRIES - 1 || !allNodes.some(n => n.ip !== ip && !sessionStorage.getItem("failed_"+n.ip))) {
+                    setConnecting(false);
+                    modalVisible = false;
+                    document.getElementById("modal-cancel-btn").style.display = "inline-block";
+                    document.getElementById("modal-close-btn").style.display = "inline-block";
+                }
             }
         }
 
@@ -324,20 +358,18 @@
         document.getElementById("node-table").addEventListener("click", (e) => {
             if (e.target.classList.contains("connect-btn")) {
                 const ip = e.target.getAttribute("data-ip");
-                if (ip) {
-                    connectNode(ip);
-                }
+                if (ip) connectNode(ip);
             }
         });
 
         // 刷新按钮
         document.getElementById("refresh-btn").addEventListener("click", refreshNodes);
 
-        // 模态框关闭按钮（手动关闭）
+        // 模态框关闭按钮
         document.getElementById("modal-cancel-btn").addEventListener("click", closeModal);
         document.getElementById("modal-close-btn").addEventListener("click", closeModal);
 
-        // 初次加载
+        // 页面初始加载
         document.addEventListener("DOMContentLoaded", () => {
             refreshNodes();
         });
