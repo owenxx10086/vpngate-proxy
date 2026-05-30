@@ -132,3 +132,56 @@ services:
 ![2](https://github.com/xiaowen-king/vpngate-proxy/blob/main/images/2.png)
 
 ![3](https://github.com/xiaowen-king/vpngate-proxy/blob/main/images/3.png)
+
+## 常见问题
+
+使用vpngate的aip链接（https://www.vpngate.net/api/iphone/）获取不到节点信息怎么办？
+
+如果使用vpngate的api链接获取不到节点信息是被屏蔽了，可以利用CF（cloudflare）免费的Workers 和 Pages来做中转
+
+中转代码如下：
+
+```
+export default {
+  async fetch(request, env, ctx) {
+    const TARGET_URL = "http://www.vpngate.net/api/iphone";
+    
+    const headers = {
+      "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    };
+
+    try {
+      const response = await fetch(TARGET_URL, { headers, timeout: 8000 });
+      
+      if (!response.ok) {
+        return new Response(`CF 边缘节点抓取失败，状态码: ${response.status}`, { status: 502 });
+      }
+
+      const rawText = await response.text();
+
+      // 2. 刚性校验：防止抓到混淆的 SOAP 加密串或空白页
+      if (!rawText.includes("#HostName") || !rawText.includes("OpenVPN_ConfigData_Base64")) {
+        return new Response("抓取成功但数据已被混淆劫持，非合规 CSV 格式", { status: 502 });
+      }
+
+      // 3. 将洗白后的标准文本流，套上防嗅探请求头，干净地吐给你的 Linux 服务器
+      return new Response(rawText, {
+        status: 200,
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Access-Control-Allow-Origin": "*",
+          "Cache-Control": "no-cache, no-store, must-revalidate"
+        }
+      });
+
+    } catch (error) {
+      return new Response(`CF 算力中转发生崩溃: ${error.message}`, { status: 500 });
+    }
+  }
+};
+```
+
+## 联系方式
+
+邮箱：239972420@qq.com
