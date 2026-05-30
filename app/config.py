@@ -6,11 +6,11 @@ CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.j
 
 DEFAULT_CONFIG = {
     "web_password": "admin",
-    "api_url": "https://http-api.kongbai5202019-09b.workers.dev",
+    "api_url": "",
     "socks_port": 1080,
     "web_port": 8080,
-    "vpn_user": "vpn",
-    "vpn_pass": "vpn",
+    "vpn_user": "",
+    "vpn_pass": "",
     "region": "all",
     "node_limit": 200,
     "check_limit": 20,
