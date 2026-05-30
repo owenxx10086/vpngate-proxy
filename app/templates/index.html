@@ -96,6 +96,7 @@
                         <select id="cfg-region" class="form-select">
                             <option value="all">所有地区</option>
                         </select>
+                        <span id="cfg-region-current" class="text-muted ms-2 small"></span>
                     </div>
                     <div class="mb-3"><label>节点数据上限</label><input type="number" class="form-control" id="cfg-node-limit" min="1" max="1000"></div>
                     <div class="mb-3"><label>检测数量上限</label><input type="number" class="form-control" id="cfg-check-limit" min="1" max="500"></div>
@@ -155,9 +156,9 @@
         let modalVisible = false;
         let allNodes = [];
         let isRefreshing = false;
-        let configRegion = "all";
+        let configRegion = "all";   // 存储从配置加载的默认地区
 
-        // 全局自定义弹窗函数
+        // ---------- 全局统一弹窗 ----------
         function showMessage(title, message, type = "info") {
             const titleEl = document.getElementById("globalModalTitle");
             const bodyEl = document.getElementById("globalModalBody");
@@ -257,7 +258,7 @@
             }
         }
 
-        // 构建地区选项 HTML（基于全部节点）
+        // 构建地区选项 HTML（基于全部节点，可选 selectedVal）
         function buildRegionOptions(nodes, selectedVal = null) {
             const regions = new Set();
             nodes.forEach(n => {
@@ -272,19 +273,37 @@
             return html;
         }
 
-        // 更新节点列表地区筛选器（始终显示所有地区，并保持当前选中值）
+        function updateCurrentRegionText() {
+            const currentVal = configRegion || "all";
+            let displayText = "当前默认：";
+            if (currentVal === "all") {
+                displayText += "所有地区";
+            } else {
+                // 从 allNodes 中找到对应的长名称
+                const node = allNodes.find(n => n.country_short === currentVal);
+                if (node) {
+                    displayText += `${node.country_long} (${node.country_short})`;
+                } else {
+                    displayText += currentVal;
+                }
+            }
+            document.getElementById("cfg-region-current").textContent = displayText;
+        }
+
+        // 更新节点列表地区筛选器（始终所有选项，保持当前选中值）
         function populateRegionFilter(nodes) {
             const select = document.getElementById("region-filter");
             const currentVal = select.value || localStorage.getItem("selectedRegion") || "all";
             select.innerHTML = buildRegionOptions(nodes, currentVal);
         }
 
-        // 更新设置页地区下拉（始终显示所有地区，并保持配置值或当前选中值）
+        // 更新设置页地区下拉（始终所有选项，并选中 configRegion，同时更新提示）
         function updateSettingsRegionDropdown(nodes) {
             const select = document.getElementById("cfg-region");
-            // 优先使用从配置加载的值，其次当前选中值
-            const currentVal = configRegion || select.value || "all";
-            select.innerHTML = buildRegionOptions(nodes, currentVal);
+            // 使用 configRegion 作为选中值，如果未定义则用 "all"
+            const selVal = configRegion || "all";
+            select.innerHTML = buildRegionOptions(nodes, selVal);
+            updateCurrentRegionText();
         }
 
         function renderNodeTable(nodes) {
@@ -345,7 +364,7 @@
                 allNodes = nodes;
                 renderNodeTable(nodes);
                 updateStats(nodes);
-                // 使用全部节点（allNodes）更新下拉，保证选项完整
+                // 更新下拉（使用全部节点，保证选项完整）
                 populateRegionFilter(allNodes);
                 updateSettingsRegionDropdown(allNodes);
                 status.textContent = "刷新完成";
@@ -360,7 +379,7 @@
             }
         }
 
-        // 节点列表地区筛选器变化时自动刷新
+        // 节点列表地区筛选器变化自动刷新
         document.getElementById("region-filter").addEventListener("change", () => {
             refreshNodes();
         });
@@ -452,7 +471,7 @@
         document.getElementById("modal-cancel-btn").addEventListener("click", closeModal);
         document.getElementById("modal-close-btn").addEventListener("click", closeModal);
 
-        // 仪表盘按钮（使用统一确认弹窗）
+        // 仪表盘按钮（统一确认弹窗）
         document.getElementById("disconnect-btn").addEventListener("click", () => {
             showConfirm("断开连接", "确定要断开当前 VPN 连接吗？", async (confirmed) => {
                 if (!confirmed) return;
@@ -507,7 +526,7 @@
             });
         });
 
-        // 重启按钮
+        // 保存并重启按钮
         document.getElementById("restart-btn").addEventListener("click", () => {
             showConfirm("保存并重启服务", "将保存当前设置并重启服务，确定继续？", async (confirmed) => {
                 if (!confirmed) return;
@@ -522,7 +541,6 @@
                     node_limit: parseInt(document.getElementById("cfg-node-limit").value),
                     check_limit: parseInt(document.getElementById("cfg-check-limit").value)
                 };
-                const msg = document.getElementById("settings-msg");
                 try {
                     const saveRes = await fetch("/api/config", {
                         method: "POST",
@@ -548,7 +566,7 @@
             });
         });
 
-        // 设置页加载与保存
+        // 加载设置表单
         async function loadSettings() {
             try {
                 const res = await fetch("/api/config");
@@ -562,18 +580,20 @@
                 document.getElementById("cfg-node-limit").value = cfg.node_limit || 200;
                 document.getElementById("cfg-check-limit").value = cfg.check_limit || 20;
                 configRegion = cfg.region || "all";
-                // 如果节点列表已加载，更新设置地区下拉
+                // 如果节点列表已加载，更新设置下拉；否则等节点刷新后再更新
                 if (allNodes.length > 0) {
                     updateSettingsRegionDropdown(allNodes);
                 } else {
-                    // 首次加载还没有节点时，下拉只有 all
+                    // 尚未有节点，下拉暂只显示“所有地区”，但文本提示会显示当前配置
                     document.getElementById("cfg-region").innerHTML = '<option value="all" selected>所有地区</option>';
+                    updateCurrentRegionText();
                 }
             } catch(e) {
                 console.error("加载设置失败", e);
             }
         }
 
+        // 普通保存按钮
         document.getElementById("settings-form").addEventListener("submit", async (e) => {
             e.preventDefault();
             const newCfg = {
@@ -596,6 +616,9 @@
                 });
                 const data = await res.json();
                 if (data.success) {
+                    // 更新 configRegion，以便界面文字同步
+                    configRegion = newCfg.region;
+                    updateCurrentRegionText();
                     msg.textContent = data.restart_needed ? "保存成功，部分设置需重启容器生效" : "保存成功";
                     msg.className = "ms-3 text-success";
                 } else {
@@ -623,7 +646,7 @@
 
         document.addEventListener("DOMContentLoaded", () => {
             loadSettings();
-            refreshNodes();
+            refreshNodes();   // 会触发 updateSettingsRegionDropdown
             loadSystemInfo();
         });
     </script>
