@@ -105,7 +105,7 @@ class VpnManager:
             self.nodes = nodes
             self.log(f"获取到 {len(nodes)} 个节点")
             # 通知前端节点已更新（特殊日志标记）
-            self.log("NODES_UPDATED")
+            # self.log("NODES_UPDATED")
         except Exception as e:
             self.log(f"获取节点列表失败: {str(e)}")
 
