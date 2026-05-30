@@ -370,7 +370,7 @@
             const status = document.getElementById("refresh-status");
             btn.disabled = true;
             isRefreshing = true;
-            status.textContent = "刷新中...";
+            status.textContent = "获取中...";
             const region = document.getElementById("region-filter").value;
             localStorage.setItem("selectedRegion", region);
             try {
@@ -387,11 +387,11 @@
                     populateRegionFilter();
                     updateSettingsRegionDropdown();
                 }
-                status.textContent = "刷新完成";
+                status.textContent = "获取完成";
                 setTimeout(() => { status.textContent = ""; }, 2000);
             } catch(e) {
                 showMessage("获取节点列表失败", e.message, "danger");
-                status.textContent = "刷新失败";
+                status.textContent = "获取失败";
                 setTimeout(() => { status.textContent = ""; }, 2000);
             } finally {
                 btn.disabled = false;
