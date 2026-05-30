@@ -42,7 +42,7 @@
                             </div>
                         </div>
                         <div class="card status-card">
-                            <div class="card-header">IP 检测结果 (ping0.cc)</div>
+                            <div class="card-header">IP 检测结果</div>
                             <div class="card-body" id="ip-info">暂无</div>
                         </div>
                     </div>
@@ -61,7 +61,7 @@
                     <select id="region-filter" class="form-select w-auto d-inline">
                         <option value="all">所有地区</option>
                     </select>
-                    <button class="btn btn-primary" onclick="refreshNodes()">刷新列表</button>
+                    <button id="refresh-btn" class="btn btn-primary">刷新列表</button>
                 </div>
                 <table class="table table-bordered table-striped">
                     <thead><tr><th>国家</th><th>IP</th><th>速率</th><th>会话数</th><th>操作</th></tr></thead>
@@ -92,25 +92,52 @@
             logPanel.scrollTop = logPanel.scrollHeight;
         });
 
+        // 仪表盘状态刷新
         async function updateStatus() {
-            const res = await fetch("/api/status");
-            const data = await res.json();
-            document.getElementById("status-text").textContent = data.connected ? "已连接" : "未连接";
-            document.getElementById("node-name").textContent = data.node_info?.hostname || "-";
-            document.getElementById("node-ip").textContent = data.node_info?.ip || "-";
-            document.getElementById("node-location").textContent = data.node_info?.country_long || "-";
-            document.getElementById("socks-link").textContent = data.socks || "-";
-            const ipInfo = document.getElementById("ip-info");
-            if (data.ip_info) {
-                ipInfo.innerHTML = Object.entries(data.ip_info).map(([k,v]) => `<p><strong>${k}:</strong> ${v}</p>`).join("");
-            } else ipInfo.textContent = "暂无";
+            try {
+                const res = await fetch("/api/status");
+                const data = await res.json();
+                document.getElementById("status-text").textContent = data.connected ? "已连接" : "未连接";
+                document.getElementById("node-name").textContent = data.node_info?.hostname || "-";
+                document.getElementById("node-ip").textContent = data.node_info?.ip || "-";
+                document.getElementById("node-location").textContent = data.node_info?.country_long || "-";
+                document.getElementById("socks-link").textContent = data.socks || "-";
+                const ipInfo = document.getElementById("ip-info");
+                if (data.ip_info && Object.keys(data.ip_info).length > 0) {
+                    ipInfo.innerHTML = Object.entries(data.ip_info).map(([k,v]) => `<p><strong>${k}:</strong> ${v}</p>`).join("");
+                } else {
+                    ipInfo.textContent = "暂无";
+                }
+            } catch(e) { console.error(e); }
         }
         setInterval(updateStatus, 3000);
+        updateStatus();
 
-        async function refreshNodes() {
-            const region = document.getElementById("region-filter").value;
-            const res = await fetch(`/api/nodes?region=${region}`);
-            const nodes = await res.json();
+        // 节点列表相关
+        let allNodes = [];
+
+        function populateRegionFilter(nodes) {
+            const select = document.getElementById("region-filter");
+            // 保留第一个选项“所有地区”
+            select.innerHTML = '<option value="all">所有地区</option>';
+            const regions = new Set();
+            nodes.forEach(n => {
+                if (n.country_short) regions.add(JSON.stringify({short: n.country_short, long: n.country_long}));
+            });
+            const sorted = Array.from(regions).map(JSON.parse).sort((a,b) => a.short.localeCompare(b.short));
+            sorted.forEach(r => {
+                const opt = document.createElement("option");
+                opt.value = r.short;
+                opt.textContent = `${r.long} (${r.short})`;
+                select.appendChild(opt);
+            });
+            // 如果之前有选中的地区，尝试恢复
+            const savedRegion = localStorage.getItem("selectedRegion") || "all";
+            select.value = savedRegion;
+        }
+
+        function renderNodeTable(nodes) {
+            const tbody = document.getElementById("node-table");
             let html = "";
             nodes.forEach(n => {
                 html += `<tr>
@@ -121,12 +148,52 @@
                     <td><button class="btn btn-sm btn-primary" onclick="connectNode('${n.ip}')">连接</button></td>
                 </tr>`;
             });
-            document.getElementById("node-table").innerHTML = html;
+            tbody.innerHTML = html || "<tr><td colspan='5'>无节点数据</td></tr>";
         }
+
+        async function refreshNodes() {
+            const region = document.getElementById("region-filter").value;
+            localStorage.setItem("selectedRegion", region);
+            try {
+                const res = await fetch(`/api/nodes?region=${encodeURIComponent(region)}`);
+                const nodes = await res.json();
+                allNodes = nodes;
+                renderNodeTable(nodes);
+                // 只在“所有地区”时更新筛选器，保留用户选择
+                if (region === "all") {
+                    populateRegionFilter(nodes);
+                }
+                document.getElementById("region-filter").value = region;
+            } catch(e) {
+                alert("获取节点列表失败: " + e);
+            }
+        }
+
         async function connectNode(ip) {
-            await fetch("/api/connect", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ip }) });
-            updateStatus();
+            try {
+                const res = await fetch("/api/connect", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ ip })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    updateStatus();
+                } else {
+                    alert("连接失败: " + (data.error || "未知错误"));
+                }
+            } catch(e) {
+                alert("请求失败: " + e);
+            }
         }
+
+        // 页面加载时获取节点列表并初始化
+        document.addEventListener("DOMContentLoaded", () => {
+            refreshNodes();
+        });
+
+        // 刷新按钮绑定事件（同时防止重复绑定）
+        document.getElementById("refresh-btn").addEventListener("click", refreshNodes);
 
         // 设置页加载与保存
         async function loadSettings() {
@@ -161,8 +228,6 @@
             }
         });
         loadSettings();
-        // 初始加载节点
-        refreshNodes();
     </script>
 </body>
 </html>
