@@ -11,8 +11,8 @@ DEFAULT_CONFIG = {
     "vpn_user": "vpn",
     "vpn_pass": "vpn",
     "region": "all",
-    "node_limit": 200,          # 节点列表返回最大数量
-    "check_limit": 20           # 后台检测节点最大数量
+    "node_limit": 200,
+    "check_limit": 20
 }
 
 def load_config():
