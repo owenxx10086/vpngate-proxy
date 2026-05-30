@@ -179,14 +179,18 @@
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ ip })
                 });
+                if (!res.ok) {
+                    const errData = await res.json().catch(() => ({}));
+                    throw new Error(errData.error || `HTTP ${res.status}`);
+                }
                 const data = await res.json();
                 if (data.success) {
                     updateStatus();
                 } else {
-                    alert("连接失败: " + (data.error || "未知错误"));
+                    throw new Error(data.error || "连接失败");
                 }
             } catch(e) {
-                alert("请求失败: " + e);
+                alert("连接请求失败: " + e.message);
             }
         }
 
