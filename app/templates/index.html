@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VPN Gate 代理面板</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        .log-area { height: 300px; overflow-y: auto; background: #222; color: #0f0; font-family: monospace; padding: 10px; }
+        .status-card { margin-bottom: 15px; }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-dark bg-dark">
+        <div class="container-fluid">
+            <span class="navbar-brand mb-0 h1">VPN Gate 代理</span>
+            <div>
+                <a href="/logout" class="btn btn-outline-light btn-sm">登出</a>
+            </div>
+        </div>
+    </nav>
+    <div class="container mt-4">
+        <ul class="nav nav-tabs" id="mainTab" role="tablist">
+            <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#dashboard">仪表盘</button></li>
+            <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#nodes">节点列表</button></li>
+            <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#settings">设置</button></li>
+        </ul>
+        <div class="tab-content mt-3">
+            <div class="tab-pane fade show active" id="dashboard">
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="card status-card">
+                            <div class="card-header">连接状态</div>
+                            <div class="card-body">
+                                <p><strong>状态：</strong><span id="status-text">未连接</span></p>
+                                <p><strong>节点：</strong><span id="node-name">-</span></p>
+                                <p><strong>IP：</strong><span id="node-ip">-</span></p>
+                                <p><strong>归属地：</strong><span id="node-location">-</span></p>
+                                <p><strong>SOCKS5：</strong><code id="socks-link">-</code></p>
+                            </div>
+                        </div>
+                        <div class="card status-card">
+                            <div class="card-header">IP 检测结果 (ping0.cc)</div>
+                            <div class="card-body" id="ip-info">暂无</div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header">实时日志</div>
+                            <div class="card-body p-0">
+                                <div id="log-panel" class="log-area"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="tab-pane fade" id="nodes">
+                <div class="mb-3">
+                    <select id="region-filter" class="form-select w-auto d-inline">
+                        <option value="all">所有地区</option>
+                    </select>
+                    <button class="btn btn-primary" onclick="refreshNodes()">刷新列表</button>
+                </div>
+                <table class="table table-bordered table-striped">
+                    <thead><tr><th>国家</th><th>IP</th><th>速率</th><th>会话数</th><th>操作</th></tr></thead>
+                    <tbody id="node-table"></tbody>
+                </table>
+            </div>
+            <div class="tab-pane fade" id="settings">
+                <form id="settings-form">
+                    <div class="mb-3"><label>面板密码</label><input type="password" class="form-control" id="cfg-password"></div>
+                    <div class="mb-3"><label>API 地址</label><input class="form-control" id="cfg-api-url"></div>
+                    <div class="mb-3"><label>SOCKS 端口</label><input type="number" class="form-control" id="cfg-socks-port"></div>
+                    <div class="mb-3"><label>面板端口 (重启生效)</label><input type="number" class="form-control" id="cfg-web-port"></div>
+                    <div class="mb-3"><label>VPN 用户名</label><input class="form-control" id="cfg-vpn-user"></div>
+                    <div class="mb-3"><label>VPN 密码</label><input type="password" class="form-control" id="cfg-vpn-pass"></div>
+                    <div class="mb-3"><label>默认地区</label><input class="form-control" id="cfg-region" placeholder="all 或 JP, US..."></div>
+                    <button type="submit" class="btn btn-success">保存</button>
+                    <span id="settings-msg" class="ms-3"></span>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        const logPanel = document.getElementById("log-panel");
+        socket.on("log", (data) => {
+            logPanel.innerHTML += `<div>${data.message}</div>`;
+            logPanel.scrollTop = logPanel.scrollHeight;
+        });
+
+        async function updateStatus() {
+            const res = await fetch("/api/status");
+            const data = await res.json();
+            document.getElementById("status-text").textContent = data.connected ? "已连接" : "未连接";
+            document.getElementById("node-name").textContent = data.node_info?.hostname || "-";
+            document.getElementById("node-ip").textContent = data.node_info?.ip || "-";
+            document.getElementById("node-location").textContent = data.node_info?.country_long || "-";
+            document.getElementById("socks-link").textContent = data.socks || "-";
+            const ipInfo = document.getElementById("ip-info");
+            if (data.ip_info) {
+                ipInfo.innerHTML = Object.entries(data.ip_info).map(([k,v]) => `<p><strong>${k}:</strong> ${v}</p>`).join("");
+            } else ipInfo.textContent = "暂无";
+        }
+        setInterval(updateStatus, 3000);
+
+        async function refreshNodes() {
+            const region = document.getElementById("region-filter").value;
+            const res = await fetch(`/api/nodes?region=${region}`);
+            const nodes = await res.json();
+            let html = "";
+            nodes.forEach(n => {
+                html += `<tr>
+                    <td>${n.country_long} (${n.country_short})</td>
+                    <td>${n.ip}</td>
+                    <td>${n.speed} bps</td>
+                    <td>${n.num_sessions}</td>
+                    <td><button class="btn btn-sm btn-primary" onclick="connectNode('${n.ip}')">连接</button></td>
+                </tr>`;
+            });
+            document.getElementById("node-table").innerHTML = html;
+        }
+        async function connectNode(ip) {
+            await fetch("/api/connect", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ip }) });
+            updateStatus();
+        }
+
+        // 设置页加载与保存
+        async function loadSettings() {
+            const res = await fetch("/api/config");
+            const cfg = await res.json();
+            document.getElementById("cfg-password").value = cfg.web_password || "";
+            document.getElementById("cfg-api-url").value = cfg.api_url || "";
+            document.getElementById("cfg-socks-port").value = cfg.socks_port || 1080;
+            document.getElementById("cfg-web-port").value = cfg.web_port || 8080;
+            document.getElementById("cfg-vpn-user").value = cfg.vpn_user || "";
+            document.getElementById("cfg-vpn-pass").value = cfg.vpn_pass || "";
+            document.getElementById("cfg-region").value = cfg.region || "all";
+        }
+        document.getElementById("settings-form").addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const newCfg = {
+                web_password: document.getElementById("cfg-password").value,
+                api_url: document.getElementById("cfg-api-url").value,
+                socks_port: parseInt(document.getElementById("cfg-socks-port").value),
+                web_port: parseInt(document.getElementById("cfg-web-port").value),
+                vpn_user: document.getElementById("cfg-vpn-user").value,
+                vpn_pass: document.getElementById("cfg-vpn-pass").value,
+                region: document.getElementById("cfg-region").value
+            };
+            const res = await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(newCfg) });
+            const data = await res.json();
+            const msg = document.getElementById("settings-msg");
+            if (data.success) {
+                msg.innerHTML = data.restart_needed ? "保存成功，部分设置需重启容器生效" : "保存成功";
+            } else {
+                msg.innerHTML = "保存失败";
+            }
+        });
+        loadSettings();
+        // 初始加载节点
+        refreshNodes();
+    </script>
+</body>
+</html>
