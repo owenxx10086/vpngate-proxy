@@ -40,7 +40,7 @@ vpngate-proxy/
 ### 前提条件
 
 - 一台 Linux 主机（或任何支持 Docker 的设备）
-- 需要暴露的端口未被占用（默认 `5000` 用于面板，`1080` 用于 SOCKS5）
+- 需要暴露的端口未被占用（默认 `8080` 用于面板，`1080` 用于 SOCKS5）
 
 ### 使用预构建镜像（推荐）
 
@@ -53,3 +53,25 @@ docker run -d \
   -p 1080:1080 \
   ghcr.io/xiaowen-king/vpngate-proxy:latest
 ```
+### 从源码构建
+
+```
+git clone https://github.com/xiaowen-king/vpngate-proxy.git
+cd vpngate-proxy
+docker build -t vpngate-proxy .
+docker run -d --name vpn-proxy --cap-add=NET_ADMIN --device=/dev/net/tun -p 8080:8080 -p 1080:1080 vpngate-proxy
+```
+## ⚙️ 配置说明
+
+首次启动后，访问 http://你的主机IP:8080，使用默认密码 admin 登录。
+
+|配置项|说明|默认值|
+|------|---|-------|
+|面板密码|Web登录密码|admin|
+|API 地址|获取VPNGate节点列表的URL|（空，需填写）|
+|SOCKS端口|SOCKS5代理监听端口|1080|
+|VPN用户名 / 密码|OpenVPN认证信息（VPN Gate 默认为 vpn）|（空，需填写）|
+|默认连接地区|自动连接和后台检测时使用的地区代码（如 JP）|all（所有地区）|
+|节点数据上限|每次从 API 拉取节点时返回的最大数量|200|
+|检测数量上限|后台预检时最多检测的节点数量|20|
+|自动更新节点间隔|浏览器自动刷新节点缓存的时间间隔（分钟），0 表示关闭|0|
