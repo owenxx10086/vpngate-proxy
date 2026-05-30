@@ -5,6 +5,7 @@ import os
 import time
 import threading
 import logging
+import secrets
 
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for
 from flask_socketio import SocketIO, emit
@@ -13,13 +14,10 @@ from config import load_config, save_config
 from vpn_manager import VpnManager
 
 app = Flask(__name__)
-# ---------- 关键修复 ----------
-# 1. 使用唯一的 Session Cookie 名称，避免与其他 Flask 项目冲突
 app.config['SESSION_COOKIE_NAME'] = 'vpngate_proxy_session'
-# 2. 从配置文件加载持久化密钥，避免重启后 session 失效
+
 cfg = load_config()
-app.secret_key = cfg.get("secret_key", os.urandom(24))
-# ---------------------------------
+app.secret_key = cfg.get("secret_key") or secrets.token_hex(24)   # 保证为字符串且非空
 
 socketio = SocketIO(app, async_mode="eventlet")
 
@@ -132,7 +130,6 @@ def auto_connect():
         nodes = manager.filter_nodes(region)
         if not nodes:
             return jsonify({"success": False, "error": "当前地区没有可用节点"})
-        # 连接第一个节点，可改为循环尝试多个
         success = manager.connect_node(nodes[0])
         if success:
             return jsonify({"success": True, "node": nodes[0]["hostname"]})
