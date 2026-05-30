@@ -156,24 +156,19 @@ class VpnManager:
             pass
         return None, None
 
-    def _add_route_to_gateway(self, gateway, dev):
-        """添加一条到网关的 /32 路由"""
-        if not gateway or not dev:
-            return
+    def _remove_default_route(self, dev):
+        """删除通过指定接口的默认路由"""
         try:
-            subprocess.run(["ip", "route", "add", f"{gateway}/32", "dev", dev], check=True)
-            self.log(f"已添加路由: {gateway}/32 dev {dev}")
-        except subprocess.CalledProcessError as e:
-            self.log(f"添加路由失败: {e}")
-
-    def _del_route_to_gateway(self, gateway, dev):
-        """删除对应的路由"""
-        if not gateway or not dev:
-            return
-        try:
-            subprocess.run(["ip", "route", "del", f"{gateway}/32", "dev", dev], check=True)
-        except Exception:
-            pass
+            # 先检查是否存在
+            result = subprocess.run(
+                ["ip", "route", "show", "default", "dev", dev],
+                capture_output=True, text=True
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                subprocess.run(["ip", "route", "del", "default", "dev", dev], check=True)
+                self.log(f"已删除默认路由 dev {dev}")
+        except Exception as e:
+            self.log(f"删除默认路由失败: {e}")
 
     def connect_node(self, node):
         self.disconnect()
@@ -193,7 +188,8 @@ class VpnManager:
 
         if "auth-user-pass" not in ovpn_content:
             ovpn_content += f"\nauth-user-pass {auth_path}\n"
-        ovpn_content += "\nroute-nopull\n"
+
+        # 不再添加 route-nopull，让 OpenVPN 正常推送路由（包括默认路由）
         ovpn_content += "\ndata-ciphers AES-256-GCM:AES-128-GCM:AES-128-CBC:CHACHA20-POLY1305\n"
 
         ovpn_path = "/tmp/vpn_config.ovpn"
@@ -269,8 +265,8 @@ class VpnManager:
         self.vpn_gateway = vpn_gateway
         self.health_fail_count = 0
 
-        # **新增：添加路由到网关**
-        self._add_route_to_gateway(vpn_gateway, tun_dev)
+        # 删除 OpenVPN 添加的默认路由，避免全局流量走 VPN
+        self._remove_default_route(tun_dev)
 
         self.log(f"VPN 连接成功，本机 VPN IP: {tun_ip}, 接口: {tun_dev}, 网关: {vpn_gateway}")
 
@@ -287,10 +283,6 @@ class VpnManager:
         return True
 
     def disconnect(self):
-        # **新增：删除之前添加的路由**
-        if self.vpn_gateway and self.tun_dev:
-            self._del_route_to_gateway(self.vpn_gateway, self.tun_dev)
-
         if self.vpn_process:
             self.log("断开当前连接...")
             try:
@@ -329,6 +321,7 @@ class VpnManager:
                 self.health_fail_count = 0
                 continue
 
+            # 直接 ping 网关，因为点对点路由必然存在
             target = self.vpn_gateway if self.vpn_gateway else "8.8.8.8"
             try:
                 ip_check = subprocess.run(
