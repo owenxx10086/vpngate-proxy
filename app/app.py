@@ -107,6 +107,33 @@ def handle_config():
             restart_needed = True
         return jsonify({"success": True, "restart_needed": restart_needed})
 
+@app.route("/api/system")
+@login_required
+def system_info():
+    import subprocess
+    info = {}
+    try:
+        ver = subprocess.check_output(["openvpn", "--version"], stderr=subprocess.STDOUT, text=True)
+        info["openvpn"] = ver.splitlines()[0].strip()
+    except Exception:
+        info["openvpn"] = "未知"
+    try:
+        ver = subprocess.check_output(["python", "--version"], stderr=subprocess.STDOUT, text=True)
+        info["python"] = ver.strip()
+    except Exception:
+        info["python"] = "未知"
+    try:
+        ver = subprocess.check_output(["ip", "-V"], stderr=subprocess.STDOUT, text=True)
+        info["iproute2"] = ver.strip()
+    except Exception:
+        info["iproute2"] = "未知"
+    try:
+        ver = subprocess.check_output(["curl", "--version"], stderr=subprocess.STDOUT, text=True)
+        info["curl"] = ver.splitlines()[0].strip()
+    except Exception:
+        info["curl"] = "未知"
+    return jsonify(info)
+
 @socketio.on("connect")
 def handle_connect():
     emit("log", {"message": "WebSocket 已连接"})
