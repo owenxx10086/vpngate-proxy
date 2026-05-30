@@ -45,12 +45,10 @@ vpngate-proxy/
 ### 使用预构建镜像（推荐）
 
 ```
-docker run -d \
-  --name vpn-proxy \
-  --cap-add=NET_ADMIN \
-  --device=/dev/net/tun \
-  -p 8080:8080 \
-  -p 1080:1080 \
+docker run -d --name vpn-proxy \
+  --cap-add=NET_ADMIN --device=/dev/net/tun \
+  -p 5000:8080 -p 1080:1080 \
+  -v ./data:/data \
   ghcr.io/xiaowen-king/vpngate-proxy:latest
 ```
 ### 从源码构建
@@ -59,7 +57,13 @@ docker run -d \
 git clone https://github.com/xiaowen-king/vpngate-proxy.git
 cd vpngate-proxy
 docker build -t vpngate-proxy .
-docker run -d --name vpn-proxy --cap-add=NET_ADMIN --device=/dev/net/tun -p 8080:8080 -p 1080:1080 vpngate-proxy
+docker run -d --name vpn-proxy \
+  --cap-add=NET_ADMIN \
+  --device=/dev/net/tun \
+  -p 8080:8080 \
+  -p 1080:1080 \
+  -v ./data:/data \
+  vpngate-proxy
 ```
 ## ⚙️ 配置说明
 
