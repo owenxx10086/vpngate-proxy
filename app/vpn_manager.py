@@ -36,8 +36,10 @@ class VpnManager:
         self._bg_check_thread = None
         self._log_callback = None
         self.tun_dev = None
-        self.health_fail_count = 0      # 连续健康检测失败计数
-        self.max_health_fails = 3       # 连续失败3次才切换
+        self.vpn_gateway = None            # 保存 VPN 网关 IP（隧道对端）
+        self.health_fail_count = 0
+        self.max_health_fails = 3
+        self._available_nodes = []         # 确保属性存在
 
     def set_log_callback(self, cb):
         self._log_callback = cb
@@ -173,7 +175,10 @@ class VpnManager:
 
         if "auth-user-pass" not in ovpn_content:
             ovpn_content += f"\nauth-user-pass {auth_path}\n"
-        ovpn_content += "\nroute-nopull\n"
+
+        # 放弃 route-nopull，改用 pull-filter 只忽略重定向网关和 DNS 推送
+        ovpn_content += "\npull-filter ignore redirect-gateway\n"
+        ovpn_content += "\npull-filter ignore dhcp-option DNS\n"
         ovpn_content += "\ndata-ciphers AES-256-GCM:AES-128-GCM:AES-128-CBC:CHACHA20-POLY1305\n"
 
         ovpn_path = "/tmp/vpn_config.ovpn"
@@ -192,6 +197,7 @@ class VpnManager:
 
         tun_ip = None
         tun_dev = None
+        vpn_gateway = None
         connected_flag = False
         start_time = time.time()
         timeout = 25
@@ -212,6 +218,13 @@ class VpnManager:
             if "Peer Connection Initiated" in line:
                 self.log("TLS 握手成功，等待配置...")
 
+            # 从推送的 ifconfig 行提取网关 IP（第二个 IP）
+            if "PUSH: Received control message: 'PUSH_REPLY" in line:
+                match = re.search(r"ifconfig (\d+\.\d+\.\d+\.\d+) (\d+\.\d+\.\d+\.\d+)", line)
+                if match:
+                    vpn_gateway = match.group(2)
+                    self.log(f"提取到 VPN 网关 IP: {vpn_gateway}")
+
             if "Initialization Sequence Completed" in line:
                 connected_flag = True
                 self.log("OpenVPN 初始化完成")
@@ -222,6 +235,16 @@ class VpnManager:
                 if match:
                     tun_ip = match.group(1)
                     self.log(f"从 OpenVPN 日志获取到 VPN IP: {tun_ip}")
+
+        # 如果还未拿到网关，尝试从系统接口对端获取
+        if not vpn_gateway:
+            self.log("未从推送中获取到网关，使用系统获取...")
+            ip_info = self._get_tun_info()
+            if ip_info:
+                tun_ip_temp, dev_temp = ip_info
+                # 根据 ifconfig 推送格式，网关通常是本机 IP 最后一位 +1，但不可靠
+                # 这里简单跳过，健康检测 ping 8.8.8.8 作为后备
+                pass
 
         if connected_flag or tun_ip:
             self.log("正在从系统获取 VPN 接口信息...")
@@ -239,8 +262,9 @@ class VpnManager:
             return False
 
         self.tun_dev = tun_dev
-        self.health_fail_count = 0   # 重置失败计数
-        self.log(f"VPN 连接成功，本机 VPN IP: {tun_ip}, 接口: {tun_dev}")
+        self.vpn_gateway = vpn_gateway  # 可能为 None，健康检测会回退到 8.8.8.8
+        self.health_fail_count = 0
+        self.log(f"VPN 连接成功，本机 VPN IP: {tun_ip}, 接口: {tun_dev}, 网关: {vpn_gateway}")
 
         socks_bind = "0.0.0.0"
         socks_port = self.config["socks_port"]
@@ -270,6 +294,7 @@ class VpnManager:
             self.socks_server.stop()
             self.socks_server = None
         self.tun_dev = None
+        self.vpn_gateway = None
         self.status["connected"] = False
         self.status["node_info"] = {}
         self.status["socks"] = ""
@@ -292,25 +317,27 @@ class VpnManager:
                 self.health_fail_count = 0
                 continue
 
-            # 先检查接口是否存在
+            # 优先 ping 网关 IP，若无则 ping 8.8.8.8
+            target = self.vpn_gateway if self.vpn_gateway else "8.8.8.8"
             try:
+                # 检查接口是否存在
                 ip_check = subprocess.run(
                     ["ip", "addr", "show", "dev", self.tun_dev],
                     capture_output=True, text=True, timeout=5
                 )
                 if ip_check.returncode != 0 or "inet" not in ip_check.stdout:
-                    self.log(f"接口 {self.tun_dev} 不存在或没有 IP，可能已断开")
+                    self.log(f"接口 {self.tun_dev} 不存在，可能已断开")
                     self.health_fail_count += 1
                 else:
-                    # 尝试 ping 8.8.8.8
                     ping = subprocess.run(
-                        ["ping", "-c", "1", "-W", "3", "-I", self.tun_dev, "8.8.8.8"],
+                        ["ping", "-c", "1", "-W", "3", "-I", self.tun_dev, target],
                         capture_output=True, text=True, timeout=5
                     )
                     if "1 received" in ping.stdout:
-                        self.health_fail_count = 0  # 成功一次就清零
+                        self.health_fail_count = 0
+                        self.log(f"健康检测成功: ping {target} 可达")
                     else:
-                        self.log(f"Ping 失败: {ping.stdout.strip()[-100:]}")
+                        self.log(f"Ping {target} 失败: {ping.stdout.strip()[-100:]}")
                         self.health_fail_count += 1
             except Exception as e:
                 self.log(f"健康检测异常: {str(e)}")
@@ -340,20 +367,20 @@ class VpnManager:
             self.log(f"当前可用节点: {len(available)} 个")
 
     def _switch_to_next_available(self):
-        if hasattr(self, "_available_nodes") and self._available_nodes:
+        if self._available_nodes:
             next_node = self._available_nodes.pop(0)
             self.log(f"切换到节点: {next_node['hostname']}")
             self.connect_node(next_node)
         else:
-            self.log("没有可用节点，尝试从列表重新获取")
-            self.fetch_nodes()
+            self.log("没有预先检测的可用节点，尝试从当前列表中选择...")
             nodes = self.filter_nodes(self.config["region"])
             for node in nodes:
                 if self._stop_event.is_set():
                     break
-                if node["ip"] == self.status["node_info"].get("ip"):
+                if self.status["connected"] and node["ip"] == self.status["node_info"].get("ip"):
                     continue
                 if self.test_node(node):
+                    self.log(f"切换到节点: {node['hostname']}")
                     self.connect_node(node)
                     return
             self.log("所有节点均不可用，等待下次检测")
