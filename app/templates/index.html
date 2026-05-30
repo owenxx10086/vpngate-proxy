@@ -100,6 +100,11 @@
                     </div>
                     <div class="mb-3"><label>节点数据上限</label><input type="number" class="form-control" id="cfg-node-limit" min="1" max="1000"></div>
                     <div class="mb-3"><label>检测数量上限</label><input type="number" class="form-control" id="cfg-check-limit" min="1" max="500"></div>
+                    <div class="mb-3">
+                        <label>自动更新节点间隔 (分钟)</label>
+                        <input type="number" class="form-control" id="cfg-auto-update-interval" min="0" max="1440" placeholder="0">
+                        <small class="text-muted">设置后浏览器会按此间隔自动刷新全量节点，0 表示关闭。</small>
+                    </div>
                     <button type="submit" class="btn btn-success">保存</button>
                     <button type="button" id="restart-btn" class="btn btn-danger ms-2">保存并重启服务</button>
                     <span id="settings-msg" class="ms-3"></span>
@@ -158,6 +163,7 @@
         let displayedNodes = [];
         let isRefreshing = false;
         let configRegion = "all";
+        let fetchIntervalTimer = null;   // 定时器句柄
 
         function showMessage(title, message, type = "info") {
             document.getElementById("globalModalTitle").textContent = title;
@@ -324,6 +330,39 @@
                     updateSettingsRegionDropdown();
                 }
             } catch(e) { console.error(e); }
+        }
+
+        // ---------- 自动刷新定时器 ----------
+        function stopFetchTimer() {
+            if (fetchIntervalTimer) {
+                clearInterval(fetchIntervalTimer);
+                fetchIntervalTimer = null;
+            }
+        }
+
+        function startFetchTimer(intervalMinutes) {
+            stopFetchTimer();
+            const minutes = parseInt(intervalMinutes);
+            if (!minutes || minutes <= 0) return;
+            const ms = minutes * 60 * 1000;
+            fetchIntervalTimer = setInterval(async () => {
+                console.log("自动刷新全量节点缓存...");
+                await updateAllNodesCache();
+                // 如果节点列表页可见，也静默更新表格
+                const nodesTab = document.getElementById("nodes");
+                if (nodesTab.classList.contains("active")) {
+                    try {
+                        const region = document.getElementById("region-filter").value;
+                        const res = await fetch(`/api/nodes?region=${encodeURIComponent(region)}`);
+                        if (res.ok) {
+                            const nodes = await res.json();
+                            displayedNodes = nodes;
+                            renderNodeTable(nodes);
+                            updateStats(nodes);
+                        }
+                    } catch(e) {}
+                }
+            }, ms);
         }
 
         async function refreshNodes() {
@@ -497,7 +536,7 @@
             });
         });
 
-        // 保存并重启按钮
+        // 保存并重启按钮（需包含 auto_update_interval）
         document.getElementById("restart-btn").addEventListener("click", () => {
             showConfirm("保存并重启服务", "将保存当前设置并重启服务，确定继续？", async (confirmed) => {
                 if (!confirmed) return;
@@ -510,7 +549,8 @@
                     vpn_pass: document.getElementById("cfg-vpn-pass").value,
                     region: document.getElementById("cfg-region").value,
                     node_limit: parseInt(document.getElementById("cfg-node-limit").value),
-                    check_limit: parseInt(document.getElementById("cfg-check-limit").value)
+                    check_limit: parseInt(document.getElementById("cfg-check-limit").value),
+                    auto_update_interval: parseInt(document.getElementById("cfg-auto-update-interval").value) || 0
                 };
                 try {
                     const saveRes = await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(newCfg) });
@@ -536,9 +576,12 @@
                 document.getElementById("cfg-vpn-pass").value = cfg.vpn_pass || "";
                 document.getElementById("cfg-node-limit").value = cfg.node_limit || 200;
                 document.getElementById("cfg-check-limit").value = cfg.check_limit || 20;
+                document.getElementById("cfg-auto-update-interval").value = cfg.auto_update_interval || 0;
                 configRegion = cfg.region || "all";
                 if (allNodesCache.length > 0) updateSettingsRegionDropdown();
                 else updateCurrentRegionText();
+                // 启动自动刷新定时器
+                startFetchTimer(cfg.auto_update_interval || 0);
             } catch(e) { console.error(e); }
         }
 
@@ -553,7 +596,8 @@
                 vpn_pass: document.getElementById("cfg-vpn-pass").value,
                 region: document.getElementById("cfg-region").value,
                 node_limit: parseInt(document.getElementById("cfg-node-limit").value),
-                check_limit: parseInt(document.getElementById("cfg-check-limit").value)
+                check_limit: parseInt(document.getElementById("cfg-check-limit").value),
+                auto_update_interval: parseInt(document.getElementById("cfg-auto-update-interval").value) || 0
             };
             const msg = document.getElementById("settings-msg");
             try {
@@ -562,6 +606,9 @@
                 if (data.success) {
                     configRegion = newCfg.region;
                     updateCurrentRegionText();
+                    // 更新定时器
+                    const interval = parseInt(document.getElementById("cfg-auto-update-interval").value) || 0;
+                    startFetchTimer(interval);
                     msg.textContent = data.restart_needed ? "保存成功，部分设置需重启容器生效" : "保存成功";
                     msg.className = "ms-3 text-success";
                 } else {
