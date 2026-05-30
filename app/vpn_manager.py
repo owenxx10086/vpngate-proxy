@@ -119,14 +119,14 @@ class VpnManager:
                 return None
             soup = BeautifulSoup(resp.text, "html.parser")
             data = {}
-            # 解析常见字段，根据页面实际结构调整
+            # 解析常见字段
             items = soup.select("div.card-body .row .col")
             for item in items:
                 text = item.get_text(strip=True)
                 if ":" in text:
                     key, val = text.split(":", 1)
                     data[key.strip()] = val.strip()
-            # 补充一些特定字段的解析
+            # 补充特定字段
             risk_el = soup.find(string=re.compile("风控", re.IGNORECASE))
             if risk_el:
                 data["风险值"] = risk_el.find_next().get_text(strip=True)
@@ -171,6 +171,10 @@ class VpnManager:
         if "auth-user-pass" not in ovpn_content:
             ovpn_content += f"\nauth-user-pass {auth_path}\n"
         ovpn_content += "\nroute-nopull\n"  # 不拉取默认路由
+
+        # 兼容 OpenVPN 2.6+：添加服务器可能使用的旧加密算法
+        ovpn_content += "\ndata-ciphers AES-256-GCM:AES-128-GCM:AES-128-CBC:CHACHA20-POLY1305\n"
+
         ovpn_path = "/tmp/vpn_config.ovpn"
         with open(ovpn_path, "w") as f:
             f.write(ovpn_content)
