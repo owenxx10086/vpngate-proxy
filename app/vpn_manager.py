@@ -40,6 +40,7 @@ class VpnManager:
         self.health_fail_count = 0
         self.max_health_fails = 3
         self._available_nodes = []
+        self.policy_routing_set = False   # 是否已配置策略路由
 
     def set_log_callback(self, cb):
         self._log_callback = cb
@@ -146,7 +147,6 @@ class VpnManager:
         return True
 
     def _get_tun_info(self):
-        """获取最新的 tun 接口 IP 和名称"""
         try:
             result = subprocess.run(["ip", "addr", "show"], capture_output=True, text=True)
             matches = re.findall(r"(tun\d+):\s.*?\n\s+inet (\d+\.\d+\.\d+\.\d+)", result.stdout, re.DOTALL)
@@ -156,6 +156,30 @@ class VpnManager:
         except Exception:
             pass
         return None, None
+
+    def _setup_policy_routing(self, ip, dev):
+        """配置策略路由：源 IP 为 ip 的包走 dev 接口"""
+        try:
+            # 1. 确保 table 100 存在（默认不存在，直接加路由即可）
+            # 2. 添加默认路由到 table 100
+            subprocess.run(["ip", "route", "add", "default", "dev", dev, "table", "100"], check=False)
+            # 3. 添加策略规则：from ip 查 table 100
+            subprocess.run(["ip", "rule", "add", "from", ip, "table", "100"], check=False)
+            self.log(f"策略路由已配置: from {ip} lookup table 100 (default dev {dev})")
+            self.policy_routing_set = True
+        except Exception as e:
+            self.log(f"配置策略路由失败: {e}")
+
+    def _teardown_policy_routing(self, ip, dev):
+        """删除策略路由"""
+        if not self.policy_routing_set:
+            return
+        try:
+            subprocess.run(["ip", "rule", "del", "from", ip, "table", "100"], check=False)
+            subprocess.run(["ip", "route", "del", "default", "dev", dev, "table", "100"], check=False)
+            self.log("策略路由已清理")
+        except Exception as e:
+            self.log(f"清理策略路由失败: {e}")
 
     def connect_node(self, node):
         self.disconnect()
@@ -176,7 +200,7 @@ class VpnManager:
         if "auth-user-pass" not in ovpn_content:
             ovpn_content += f"\nauth-user-pass {auth_path}\n"
 
-        # 关键：使用 route-nopull，彻底禁止 OpenVPN 修改路由表，不影响容器主网络
+        # 使用 route-nopull 防止路由被 OpenVPN 自动修改
         ovpn_content += "\nroute-nopull\n"
         ovpn_content += "\ndata-ciphers AES-256-GCM:AES-128-GCM:AES-128-CBC:CHACHA20-POLY1305\n"
 
@@ -227,7 +251,6 @@ class VpnManager:
                     tun_ip = match.group(1)
                     self.log(f"从 OpenVPN 日志获取到 VPN IP: {tun_ip}")
 
-        # 获取最终接口信息
         if connected_flag or tun_ip:
             self.log("正在从系统获取 VPN 接口信息...")
             ip, dev = self._get_tun_info()
@@ -247,6 +270,9 @@ class VpnManager:
         self.tun_ip = tun_ip
         self.health_fail_count = 0
 
+        # ---------- 关键：配置策略路由 ----------
+        self._setup_policy_routing(tun_ip, tun_dev)
+
         self.log(f"VPN 连接成功，本机 VPN IP: {tun_ip}, 接口: {tun_dev}")
 
         socks_bind = "0.0.0.0"
@@ -262,6 +288,10 @@ class VpnManager:
         return True
 
     def disconnect(self):
+        # 清理策略路由
+        if self.tun_ip and self.tun_dev:
+            self._teardown_policy_routing(self.tun_ip, self.tun_dev)
+
         if self.vpn_process:
             self.log("断开当前连接...")
             try:
@@ -281,6 +311,7 @@ class VpnManager:
         self.status["connected"] = False
         self.status["node_info"] = {}
         self.status["socks"] = ""
+        self.policy_routing_set = False
 
     def _get_host_ip(self):
         import socket
@@ -294,12 +325,10 @@ class VpnManager:
             return "127.0.0.1"
 
     def _is_tunnel_alive(self):
-        """检查隧道是否存活：进程存在 + 接口存在且有IP"""
         if not self.vpn_process or self.vpn_process.poll() is not None:
             return False
         if not self.tun_dev or not self.tun_ip:
             return False
-        # 检查接口是否仍存在且IP未变
         try:
             result = subprocess.run(
                 ["ip", "addr", "show", "dev", self.tun_dev],
