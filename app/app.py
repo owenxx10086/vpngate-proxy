@@ -2,9 +2,9 @@ import eventlet
 eventlet.monkey_patch()
 
 import os
-import signal
-import logging
+import time
 import threading
+import logging
 
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for
 from flask_socketio import SocketIO, emit
@@ -16,17 +16,14 @@ app = Flask(__name__)
 app.secret_key = os.urandom(24)
 socketio = SocketIO(app, async_mode="eventlet")
 
-# 加载配置
 cfg = load_config()
 manager = VpnManager()
 
-# 日志回调推送到 Web
 def push_log(msg):
     socketio.emit("log", {"message": msg})
 
 manager.set_log_callback(push_log)
 
-# 简单认证装饰器
 def login_required(f):
     from functools import wraps
     @wraps(f)
@@ -65,13 +62,13 @@ def status():
     return jsonify(manager.status)
 
 @app.route("/api/nodes")
-@app.route("/api/nodes")
 @login_required
 def nodes():
     region = request.args.get("region", "all")
     try:
         nodes = manager.filter_nodes(region)
-        return jsonify(nodes[:200])
+        limit = int(manager.config.get("node_limit", 200))
+        return jsonify(nodes[:limit])
     except Exception as e:
         manager.log(f"API /api/nodes 异常: {str(e)}")
         return jsonify({"error": f"服务器内部错误: {str(e)}"}), 500
@@ -102,10 +99,41 @@ def handle_config():
         new_cfg = request.json
         manager.set_config(new_cfg)
         restart_needed = False
-        if new_cfg.get("socks_port") != cfg.get("socks_port") or \
-           new_cfg.get("web_port") != cfg.get("web_port"):
+        current = load_config()
+        if new_cfg.get("socks_port") != current.get("socks_port") or \
+           new_cfg.get("web_port") != current.get("web_port"):
             restart_needed = True
         return jsonify({"success": True, "restart_needed": restart_needed})
+
+@app.route("/api/restart", methods=["POST"])
+@login_required
+def restart():
+    try:
+        manager.stop()
+        time.sleep(1)
+        new_cfg = load_config()
+        manager.set_config(new_cfg)
+        threading.Thread(target=manager.start, daemon=True).start()
+        return jsonify({"success": True, "message": "正在重启..."})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route("/api/auto_connect", methods=["POST"])
+@login_required
+def auto_connect():
+    try:
+        region = manager.config.get("region", "all")
+        nodes = manager.filter_nodes(region)
+        if not nodes:
+            return jsonify({"success": False, "error": "当前地区没有可用节点"})
+        # 连接第一个节点，可改为循环尝试多个
+        success = manager.connect_node(nodes[0])
+        if success:
+            return jsonify({"success": True, "node": nodes[0]["hostname"]})
+        else:
+            return jsonify({"success": False, "error": "连接失败"})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route("/api/system")
 @login_required
@@ -143,6 +171,5 @@ def run_app():
     socketio.run(app, host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 if __name__ == "__main__":
-    import threading
     threading.Thread(target=manager.start, daemon=True).start()
     run_app()
