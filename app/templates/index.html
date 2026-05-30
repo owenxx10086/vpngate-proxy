@@ -8,7 +8,7 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <style>
-        .log-area { height: 300px; overflow-y: auto; background: #222; color: #0f0; font-family: monospace; padding: 10px; }
+        .log-area { height: 640px; overflow-y: auto; background: #222; color: #0f0; font-family: monospace; padding: 10px; }
         .status-card { margin-bottom: 15px; }
         .modal-log-area { height: 200px; overflow-y: auto; background: #1e1e1e; color: #0f0; font-family: monospace; padding: 10px; font-size: 0.85rem; }
     </style>
@@ -29,6 +29,7 @@
             <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#settings">设置</button></li>
         </ul>
         <div class="tab-content mt-3">
+            <!-- 仪表盘 -->
             <div class="tab-pane fade show active" id="dashboard">
                 <div class="row">
                     <div class="col-md-6">
@@ -61,6 +62,7 @@
                     </div>
                 </div>
             </div>
+            <!-- 节点列表 -->
             <div class="tab-pane fade" id="nodes">
                 <div class="mb-3">
                     <select id="region-filter" class="form-select w-auto d-inline">
@@ -74,6 +76,7 @@
                     <tbody id="node-table"></tbody>
                 </table>
             </div>
+            <!-- 设置 -->
             <div class="tab-pane fade" id="settings">
                 <form id="settings-form">
                     <div class="mb-3"><label>面板密码</label><input type="password" class="form-control" id="cfg-password"></div>
@@ -82,14 +85,26 @@
                     <div class="mb-3"><label>面板端口 (重启生效)</label><input type="number" class="form-control" id="cfg-web-port"></div>
                     <div class="mb-3"><label>VPN 用户名</label><input class="form-control" id="cfg-vpn-user"></div>
                     <div class="mb-3"><label>VPN 密码</label><input type="password" class="form-control" id="cfg-vpn-pass"></div>
-                    <div class="mb-3"><label>默认地区</label><input class="form-control" id="cfg-region" placeholder="all 或 JP, US..."></div>
+                    <div class="mb-3">
+                        <label>默认连接地区</label>
+                        <select id="cfg-region" class="form-select">
+                            <option value="all">所有地区</option>
+                            <!-- 选项由 JS 动态填充 -->
+                        </select>
+                    </div>
                     <button type="submit" class="btn btn-success">保存</button>
                     <span id="settings-msg" class="ms-3"></span>
                 </form>
+                <hr>
+                <div class="card">
+                    <div class="card-header">系统信息</div>
+                    <div class="card-body" id="system-info">加载中...</div>
+                </div>
             </div>
         </div>
     </div>
 
+    <!-- 连接进度模态框 -->
     <div class="modal fade" id="connectModal" tabindex="-1" aria-labelledby="connectModalLabel" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
         <div class="modal-dialog modal-lg">
             <div class="modal-content">
@@ -115,6 +130,9 @@
         const connectModal = new bootstrap.Modal(document.getElementById("connectModal"));
         let isConnecting = false;
         let modalVisible = false;
+        let allNodes = [];
+        let isRefreshing = false;
+        let configRegion = "all";   // 保存从后台获取的默认连接地区
 
         socket.on("log", (data) => {
             const msg = `<div>${data.message}</div>`;
@@ -126,6 +144,7 @@
             }
         });
 
+        // 更新仪表盘状态
         async function updateStatus() {
             try {
                 const res = await fetch("/api/status");
@@ -149,6 +168,7 @@
         setInterval(updateStatus, 3000);
         updateStatus();
 
+        // 复制 SOCKS5（兼容 HTTP）
         document.getElementById("copy-socks-btn").addEventListener("click", () => {
             const socks = document.getElementById("socks-link").textContent;
             if (!socks || socks === "-") return;
@@ -181,25 +201,37 @@
             }
         }
 
-        let allNodes = [];
-        let isRefreshing = false;
-
-        function populateRegionFilter(nodes) {
-            const select = document.getElementById("region-filter");
-            select.innerHTML = '<option value="all">所有地区</option>';
+        // 通用：从节点列表生成地区选项 HTML
+        function buildRegionOptions(nodes) {
             const regions = new Set();
             nodes.forEach(n => {
                 if (n.country_short) regions.add(JSON.stringify({short: n.country_short, long: n.country_long}));
             });
             const sorted = Array.from(regions).map(JSON.parse).sort((a,b) => a.short.localeCompare(b.short));
+            let html = '<option value="all">所有地区</option>';
             sorted.forEach(r => {
-                const opt = document.createElement("option");
-                opt.value = r.short;
-                opt.textContent = `${r.long} (${r.short})`;
-                select.appendChild(opt);
+                html += `<option value="${r.short}">${r.long} (${r.short})</option>`;
             });
+            return html;
+        }
+
+        // 更新节点列表页的地区筛选器
+        function populateRegionFilter(nodes) {
+            const select = document.getElementById("region-filter");
+            select.innerHTML = buildRegionOptions(nodes);
             const savedRegion = localStorage.getItem("selectedRegion") || "all";
             select.value = savedRegion;
+        }
+
+        // 更新设置页的默认连接地区下拉，并根据 configRegion 选中
+        function updateSettingsRegionDropdown(nodes) {
+            const select = document.getElementById("cfg-region");
+            select.innerHTML = buildRegionOptions(nodes);
+            if (configRegion && [...select.options].some(opt => opt.value === configRegion)) {
+                select.value = configRegion;
+            } else {
+                select.value = "all";
+            }
         }
 
         function renderNodeTable(nodes) {
@@ -242,8 +274,9 @@
                 const nodes = await res.json();
                 allNodes = nodes;
                 renderNodeTable(nodes);
-                if (region === "all") populateRegionFilter(nodes);
-                document.getElementById("region-filter").value = region;
+                populateRegionFilter(nodes);
+                // 同步更新设置页的地区下拉（如果节点列表不为空）
+                updateSettingsRegionDropdown(nodes);
                 status.textContent = "刷新完成";
                 setTimeout(() => { status.textContent = ""; }, 2000);
             } catch(e) {
@@ -257,7 +290,6 @@
         }
 
         async function connectNode(ip, depth = 0) {
-            // 首次手动点击时若已在连接中，阻止；但自动重试允许
             if (isConnecting && depth === 0) return;
             const MAX_RETRIES = 3;
             setConnecting(true);
@@ -278,7 +310,6 @@
                     modalLogPanel.scrollTop = modalLogPanel.scrollHeight;
                 }
                 document.getElementById("modal-status-text").textContent = `正在连接 ${ip} (第${depth+1}次尝试)...`;
-                // 清空旧日志，准备显示新节点连接过程
                 modalLogPanel.innerHTML = `<div style="color: #ff0;">${tip}</div>`;
                 modalLogPanel.scrollTop = modalLogPanel.scrollHeight;
             }
@@ -304,21 +335,19 @@
             } catch(e) {
                 document.getElementById("modal-status-text").textContent = `❌ 连接 ${ip} 失败: ${e.message}`;
                 if (depth < MAX_RETRIES - 1) {
-                    // 复制一份节点列表，过滤掉已失败的和当前 IP
                     const candidates = allNodes.filter(n => n.ip !== ip && !sessionStorage.getItem("failed_"+n.ip));
                     const nextNode = candidates.length > 0 ? candidates[0] : null;
                     if (nextNode) {
                         sessionStorage.setItem("failed_"+ip, "1");
                         document.getElementById("modal-status-text").textContent += "，正在自动尝试下一个节点...";
                         setTimeout(() => connectNode(nextNode.ip, depth+1), 1500);
-                        return; // 继续保持连接状态，不执行 finally 中的解锁
+                        return;
                     }
                 }
                 document.getElementById("modal-status-text").textContent += " 请手动刷新列表后重试。";
                 document.getElementById("modal-cancel-btn").style.display = "inline-block";
                 document.getElementById("modal-close-btn").style.display = "inline-block";
             } finally {
-                // 只有最终成功或失败且不再重试时才解锁
                 if (depth === MAX_RETRIES - 1 || !allNodes.some(n => n.ip !== ip && !sessionStorage.getItem("failed_"+n.ip))) {
                     setConnecting(false);
                     modalVisible = false;
@@ -346,19 +375,30 @@
         document.getElementById("modal-cancel-btn").addEventListener("click", closeModal);
         document.getElementById("modal-close-btn").addEventListener("click", closeModal);
 
-        document.addEventListener("DOMContentLoaded", () => { refreshNodes(); });
-
+        // 设置页逻辑
         async function loadSettings() {
-            const res = await fetch("/api/config");
-            const cfg = await res.json();
-            document.getElementById("cfg-password").value = cfg.web_password || "";
-            document.getElementById("cfg-api-url").value = cfg.api_url || "";
-            document.getElementById("cfg-socks-port").value = cfg.socks_port || 1080;
-            document.getElementById("cfg-web-port").value = cfg.web_port || 8080;
-            document.getElementById("cfg-vpn-user").value = cfg.vpn_user || "";
-            document.getElementById("cfg-vpn-pass").value = cfg.vpn_pass || "";
-            document.getElementById("cfg-region").value = cfg.region || "all";
+            try {
+                const res = await fetch("/api/config");
+                const cfg = await res.json();
+                document.getElementById("cfg-password").value = cfg.web_password || "";
+                document.getElementById("cfg-api-url").value = cfg.api_url || "";
+                document.getElementById("cfg-socks-port").value = cfg.socks_port || 1080;
+                document.getElementById("cfg-web-port").value = cfg.web_port || 8080;
+                document.getElementById("cfg-vpn-user").value = cfg.vpn_user || "";
+                document.getElementById("cfg-vpn-pass").value = cfg.vpn_pass || "";
+                configRegion = cfg.region || "all";
+                // 如果节点列表已加载，立即更新地区下拉
+                if (allNodes.length > 0) {
+                    updateSettingsRegionDropdown(allNodes);
+                } else {
+                    // 否则稍后在刷新节点时填充
+                    document.getElementById("cfg-region").innerHTML = '<option value="all">所有地区</option>';
+                }
+            } catch(e) {
+                console.error("加载设置失败", e);
+            }
         }
+
         document.getElementById("settings-form").addEventListener("submit", async (e) => {
             e.preventDefault();
             const newCfg = {
@@ -370,16 +410,48 @@
                 vpn_pass: document.getElementById("cfg-vpn-pass").value,
                 region: document.getElementById("cfg-region").value
             };
-            const res = await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(newCfg) });
-            const data = await res.json();
             const msg = document.getElementById("settings-msg");
-            if (data.success) {
-                msg.innerHTML = data.restart_needed ? "保存成功，部分设置需重启容器生效" : "保存成功";
-            } else {
-                msg.innerHTML = "保存失败";
+            try {
+                const res = await fetch("/api/config", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(newCfg)
+                });
+                const data = await res.json();
+                if (data.success) {
+                    msg.textContent = data.restart_needed ? "保存成功，部分设置需重启容器生效" : "保存成功";
+                    msg.className = "ms-3 text-success";
+                } else {
+                    msg.textContent = "保存失败: " + (data.error || "未知错误");
+                    msg.className = "ms-3 text-danger";
+                }
+            } catch (err) {
+                msg.textContent = "请求失败: " + err.message;
+                msg.className = "ms-3 text-danger";
             }
+            // 2秒后自动清除提示
+            setTimeout(() => { msg.textContent = ""; msg.className = "ms-3"; }, 2000);
         });
-        loadSettings();
+
+        // 加载系统信息
+        async function loadSystemInfo() {
+            try {
+                const res = await fetch("/api/system");
+                if (!res.ok) throw new Error("HTTP " + res.status);
+                const data = await res.json();
+                const div = document.getElementById("system-info");
+                div.innerHTML = Object.entries(data).map(([key, val]) => `<p><strong>${key}:</strong> ${val}</p>`).join("");
+            } catch(e) {
+                document.getElementById("system-info").textContent = "加载系统信息失败: " + e.message;
+            }
+        }
+
+        // 页面初始化
+        document.addEventListener("DOMContentLoaded", () => {
+            loadSettings();      // 加载设置表单
+            refreshNodes();      // 加载节点列表（会触发更新地区下拉）
+            loadSystemInfo();    // 加载系统信息
+        });
     </script>
 </body>
 </html>
