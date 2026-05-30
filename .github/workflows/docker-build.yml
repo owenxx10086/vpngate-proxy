@@ -34,8 +34,11 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=branch
+            # 主分支推送时生成 latest 标签
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            # 版本标签推送时生成对应版本号
             type=semver,pattern={{version}}
+            # 每次提交生成 sha-xxxxx 短标签（保留用于历史回溯）
             type=sha
 
       - name: Build and push Docker image
