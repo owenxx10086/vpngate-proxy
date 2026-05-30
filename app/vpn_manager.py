@@ -112,33 +112,25 @@ class VpnManager:
         return [n for n in self.nodes if n["country_short"].upper() == region.upper()]
 
     def detect_ip(self, ip):
+        """使用 ip-api.com 检测 IP 信息（免费，无需 API Key）"""
         try:
-            url = f"https://ping0.cc/ip/{ip}"
-            headers = {"User-Agent": "Mozilla/5.0"}
-            resp = requests.get(url, timeout=15, headers=headers)
-            if resp.status_code != 200:
+            # 请求 ip-api，返回 JSON，包含国家、地区、ISP、是否代理/机房/移动网络等
+            url = f"http://ip-api.com/json/{ip}?fields=status,message,country,countryCode,region,regionName,city,isp,proxy,hosting,mobile,query"
+            resp = requests.get(url, timeout=10)
+            data = resp.json()
+            if data.get("status") != "success":
+                self.log(f"ip-api 查询失败: {data.get('message')}")
                 return None
-            soup = BeautifulSoup(resp.text, "html.parser")
-            data = {}
-            items = soup.select("div.card-body .row .col")
-            for item in items:
-                text = item.get_text(strip=True)
-                if ":" in text:
-                    key, val = text.split(":", 1)
-                    data[key.strip()] = val.strip()
-            risk_el = soup.find(string=re.compile("风控", re.IGNORECASE))
-            if risk_el:
-                data["风险值"] = risk_el.find_next().get_text(strip=True)
-            native_el = soup.find(string=re.compile("原生", re.IGNORECASE))
-            if native_el:
-                data["原生IP"] = native_el.find_next().get_text(strip=True)
-            usage_el = soup.find(string=re.compile("使用场景", re.IGNORECASE))
-            if usage_el:
-                data["使用场景"] = usage_el.find_next().get_text(strip=True)
-            ai_el = soup.find(string=re.compile("大模型", re.IGNORECASE))
-            if ai_el:
-                data["大模型检测"] = ai_el.find_next().get_text(strip=True)
-            return data if data else None
+            return {
+                "查询IP": data.get("query", ip),
+                "国家": data.get("country", ""),
+                "地区": data.get("regionName", ""),
+                "城市": data.get("city", ""),
+                "ISP": data.get("isp", ""),
+                "代理/VPN": "是" if data.get("proxy") else "否",
+                "机房/托管": "是" if data.get("hosting") else "否",
+                "移动网络": "是" if data.get("mobile") else "否",
+            }
         except Exception as e:
             self.log(f"IP检测失败: {str(e)}")
             return None
