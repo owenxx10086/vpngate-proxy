@@ -34,7 +34,8 @@ class VpnManager:
         self._stop_event = threading.Event()
         self._health_thread = None
         self._bg_check_thread = None
-        self._auto_update_thread = None   # 自动更新线程
+        self._auto_update_thread = None          # 自动更新节点线程
+        self._auto_update_trigger = threading.Event()  # 用于唤醒自动更新线程
         self._log_callback = None
         self.tun_dev = None
         self.tun_ip = None
@@ -54,6 +55,8 @@ class VpnManager:
     def set_config(self, cfg):
         self.config = cfg
         config.save_config(cfg)
+        # 唤醒自动更新线程，使其立即检查新配置（例如间隔变化）
+        self._auto_update_trigger.set()
 
     def fetch_nodes(self):
         self.log("正在获取节点列表...")
@@ -104,8 +107,6 @@ class VpnManager:
                 })
             self.nodes = nodes
             self.log(f"获取到 {len(nodes)} 个节点")
-            # 通知前端节点已更新（特殊日志标记）
-            # self.log("NODES_UPDATED")
         except Exception as e:
             self.log(f"获取节点列表失败: {str(e)}")
 
@@ -365,21 +366,25 @@ class VpnManager:
             self.log(f"当前可用节点: {len(available)} 个")
 
     def _auto_update_loop(self):
-        """根据配置的间隔自动拉取节点列表"""
+        """根据配置的间隔自动拉取节点列表，可通过 _auto_update_trigger 唤醒"""
         while not self._stop_event.is_set():
             interval_min = self.config.get("auto_update_interval", 0)
             if interval_min <= 0:
-                # 不自动更新，休眠 30 秒再检查配置
-                time.sleep(30)
+                # 不自动更新，等待1小时后再次检查（或等待触发）
+                self._auto_update_trigger.wait(3600)
+                self._auto_update_trigger.clear()
                 continue
             interval_sec = interval_min * 60
-            # 等待指定秒数，但每 5 秒检查一次 stop 事件
-            for _ in range(interval_sec // 5):
-                if self._stop_event.is_set():
-                    return
-                time.sleep(5)
-            if not self._stop_event.is_set():
-                self.fetch_nodes()
+            # 可中断的等待
+            self._auto_update_trigger.wait(interval_sec)
+            self._auto_update_trigger.clear()
+            if self._stop_event.is_set():
+                break
+            # 再次检查间隔（可能在等待中被修改）
+            current_interval = self.config.get("auto_update_interval", 0)
+            if current_interval <= 0:
+                continue
+            self.fetch_nodes()
 
     def _switch_to_next_available(self):
         if self._available_nodes:
@@ -402,6 +407,7 @@ class VpnManager:
 
     def start(self):
         self._stop_event.clear()
+        self._auto_update_trigger.clear()
         self.fetch_nodes()
         nodes = self.filter_nodes(self.config["region"])
 
@@ -429,4 +435,5 @@ class VpnManager:
 
     def stop(self):
         self._stop_event.set()
+        self._auto_update_trigger.set()
         self.disconnect()
