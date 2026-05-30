@@ -1,13 +1,13 @@
+import eventlet
+eventlet.monkey_patch()
+
 import os
-import sys
 import signal
 import logging
 import threading
 
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for
 from flask_socketio import SocketIO, emit
-import eventlet
-eventlet.monkey_patch()
 
 from config import load_config, save_config
 from vpn_manager import VpnManager
@@ -94,7 +94,6 @@ def handle_config():
     else:
         new_cfg = request.json
         manager.set_config(new_cfg)
-        # 部分配置修改后需要重启服务，提示用户
         restart_needed = False
         if new_cfg.get("socks_port") != cfg.get("socks_port") or \
            new_cfg.get("web_port") != cfg.get("web_port"):
