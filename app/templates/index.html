@@ -76,8 +76,9 @@
                     <button id="refresh-btn" class="btn btn-primary">刷新列表</button>
                     <span id="refresh-status" class="ms-2 text-muted"></span>
                 </div>
+                <div id="node-stats" class="mb-2 text-muted small"></div>
                 <table class="table table-bordered table-striped">
-                    <thead><tr><th>国家</th><th>IP</th><th>速率</th><th>会话数</th><th>操作</th></tr></thead>
+                    <thead><tr><th>#</th><th>国家</th><th>IP</th><th>速率</th><th>会话数</th><th>操作</th></tr></thead>
                     <tbody id="node-table"></tbody>
                 </table>
             </div>
@@ -99,7 +100,7 @@
                     <div class="mb-3"><label>节点数据上限</label><input type="number" class="form-control" id="cfg-node-limit" min="1" max="1000"></div>
                     <div class="mb-3"><label>检测数量上限</label><input type="number" class="form-control" id="cfg-check-limit" min="1" max="500"></div>
                     <button type="submit" class="btn btn-success">保存</button>
-                    <button type="button" id="restart-btn" class="btn btn-danger ms-2">重启服务</button>
+                    <button type="button" id="restart-btn" class="btn btn-danger ms-2">保存并重启服务</button>
                     <span id="settings-msg" class="ms-3"></span>
                 </form>
                 <hr>
@@ -221,16 +222,21 @@
 
         function populateRegionFilter(nodes) {
             const select = document.getElementById("region-filter");
+            const currentVal = select.value || localStorage.getItem("selectedRegion") || "all";
             select.innerHTML = buildRegionOptions(nodes);
-            const savedRegion = localStorage.getItem("selectedRegion") || "all";
-            select.value = savedRegion;
+            if ([...select.options].some(opt => opt.value === currentVal)) {
+                select.value = currentVal;
+            } else {
+                select.value = "all";
+            }
         }
 
         function updateSettingsRegionDropdown(nodes) {
             const select = document.getElementById("cfg-region");
+            const currentVal = select.value || configRegion || "all";
             select.innerHTML = buildRegionOptions(nodes);
-            if (configRegion && [...select.options].some(opt => opt.value === configRegion)) {
-                select.value = configRegion;
+            if ([...select.options].some(opt => opt.value === currentVal)) {
+                select.value = currentVal;
             } else {
                 select.value = "all";
             }
@@ -239,8 +245,9 @@
         function renderNodeTable(nodes) {
             const tbody = document.getElementById("node-table");
             let html = "";
-            nodes.forEach(n => {
+            nodes.forEach((n, idx) => {
                 html += `<tr>
+                    <td>${idx+1}</td>
                     <td>${n.country_long} (${n.country_short})</td>
                     <td>${n.ip}</td>
                     <td>${n.speed} bps</td>
@@ -248,7 +255,23 @@
                     <td><button class="btn btn-sm btn-primary connect-btn" data-ip="${n.ip}" ${isConnecting ? 'disabled' : ''}>连接</button></td>
                 </tr>`;
             });
-            tbody.innerHTML = html || "<tr><td colspan='5'>无节点数据</td></tr>";
+            tbody.innerHTML = html || "<tr><td colspan='6'>无节点数据</td></tr>";
+        }
+
+        function updateStats(nodes) {
+            const statsDiv = document.getElementById("node-stats");
+            if (!nodes.length) {
+                statsDiv.textContent = "";
+                return;
+            }
+            const total = nodes.length;
+            const countryCount = {};
+            nodes.forEach(n => {
+                const key = n.country_long + " (" + n.country_short + ")";
+                countryCount[key] = (countryCount[key] || 0) + 1;
+            });
+            const countryStr = Object.entries(countryCount).map(([k,v]) => `${k}: ${v}`).join(", ");
+            statsDiv.textContent = `总节点数: ${total} | ${countryStr}`;
         }
 
         function setConnecting(state) {
@@ -276,6 +299,7 @@
                 const nodes = await res.json();
                 allNodes = nodes;
                 renderNodeTable(nodes);
+                updateStats(nodes);
                 populateRegionFilter(nodes);
                 updateSettingsRegionDropdown(nodes);
                 status.textContent = "刷新完成";
@@ -289,6 +313,11 @@
                 isRefreshing = false;
             }
         }
+
+        // 地区筛选器变化时自动刷新
+        document.getElementById("region-filter").addEventListener("change", () => {
+            refreshNodes();
+        });
 
         async function connectNode(ip, depth = 0) {
             if (isConnecting && depth === 0) return;
@@ -421,20 +450,53 @@
             } catch(e) { alert("断开失败"); }
         });
 
-        // 重启按钮
+        // 设置页 - 保存并重启服务
         document.getElementById("restart-btn").addEventListener("click", async () => {
-            if (!confirm("重启服务将断开连接并重新初始化，确定继续？")) return;
-            const res = await fetch("/api/restart", { method: "POST" });
-            const data = await res.json();
-            if (data.success) {
-                alert("重启指令已发送，页面即将刷新");
-                setTimeout(() => location.reload(), 3000);
-            } else {
-                alert("重启失败: " + (data.error || "未知错误"));
+            if (!confirm("将保存当前设置并重启服务，确定继续？")) return;
+            // 先收集表单数据并保存
+            const newCfg = {
+                web_password: document.getElementById("cfg-password").value,
+                api_url: document.getElementById("cfg-api-url").value,
+                socks_port: parseInt(document.getElementById("cfg-socks-port").value),
+                web_port: parseInt(document.getElementById("cfg-web-port").value),
+                vpn_user: document.getElementById("cfg-vpn-user").value,
+                vpn_pass: document.getElementById("cfg-vpn-pass").value,
+                region: document.getElementById("cfg-region").value,
+                node_limit: parseInt(document.getElementById("cfg-node-limit").value),
+                check_limit: parseInt(document.getElementById("cfg-check-limit").value)
+            };
+            const msg = document.getElementById("settings-msg");
+            try {
+                // 保存设置
+                const saveRes = await fetch("/api/config", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(newCfg)
+                });
+                const saveData = await saveRes.json();
+                if (!saveData.success) {
+                    msg.textContent = "保存失败，无法重启: " + (saveData.error || "未知错误");
+                    msg.className = "ms-3 text-danger";
+                    setTimeout(() => { msg.textContent = ""; msg.className = "ms-3"; }, 2000);
+                    return;
+                }
+                // 重启
+                const restartRes = await fetch("/api/restart", { method: "POST" });
+                const restartData = await restartRes.json();
+                if (restartData.success) {
+                    alert("设置已保存，重启指令已发送，页面即将刷新");
+                    setTimeout(() => location.reload(), 3000);
+                } else {
+                    alert("保存成功但重启失败: " + (restartData.error || "未知错误"));
+                }
+            } catch(e) {
+                msg.textContent = "请求失败: " + e.message;
+                msg.className = "ms-3 text-danger";
+                setTimeout(() => { msg.textContent = ""; msg.className = "ms-3"; }, 2000);
             }
         });
 
-        // 设置页逻辑
+        // 普通保存按钮保持不变
         async function loadSettings() {
             try {
                 const res = await fetch("/api/config");
