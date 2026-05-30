@@ -32,6 +32,9 @@ def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if not session.get("logged_in"):
+            # 对 API 请求返回 JSON 错误，避免前端解析 HTML
+            if request.path.startswith("/api/"):
+                return jsonify({"error": "未登录"}), 401
             return redirect(url_for("login"))
         return f(*args, **kwargs)
     return decorated
