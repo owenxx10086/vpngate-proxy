@@ -9,6 +9,8 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  # 强制所有 action 使用 Node.js 24（消除弃用警告）
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build-and-push:
@@ -19,7 +21,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4   # v4 最新版已支持 Node 24
 
       - name: Log in to Container Registry
         uses: docker/login-action@v3
@@ -30,19 +32,19 @@ jobs:
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6   # v6 原生支持 Node 24
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            # 主分支推送时生成 latest 标签
+            # 主分支推送时生成 latest 标签，始终保持最新
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            # 版本标签推送时生成对应版本号
+            # 语义化版本标签（如 v1.2.3）
             type=semver,pattern={{version}}
-            # 每次提交生成 sha-xxxxx 短标签（保留用于历史回溯）
+            # 短哈希标签（用于历史回溯）
             type=sha
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6   # v6 原生支持 Node 24
         with:
           context: .
           push: true
