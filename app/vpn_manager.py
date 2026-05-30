@@ -138,11 +138,22 @@ class VpnManager:
             return None
 
     def test_node(self, node):
-        # 可扩展为真实的连通性测试，目前保留简单实现
         return True
 
+    def _get_tun_ip(self):
+        """通过 ip addr 命令获取最新的 tun 接口 IP"""
+        try:
+            result = subprocess.run(["ip", "addr", "show"], capture_output=True, text=True)
+            # 匹配所有 tun 接口的 inet 地址，取最后一个
+            matches = re.findall(r"tun\d+:\s.*?\n\s+inet (\d+\.\d+\.\d+\.\d+)", result.stdout, re.DOTALL)
+            if matches:
+                return matches[-1]
+        except Exception:
+            pass
+        return None
+
     def connect_node(self, node):
-        """连接到指定节点，返回 True 表示连接成功"""
+        """连接到指定节点，返回 True 表示成功"""
         self.disconnect()
         self.current_node = node
         self.log(f"正在连接到节点: {node['hostname']} ({node['ip']})")
@@ -160,7 +171,7 @@ class VpnManager:
         with open(auth_path, "w") as f:
             f.write(f"{self.config['vpn_user']}\n{self.config['vpn_pass']}\n")
 
-        # 修改配置：添加 auth-user-pass、route-nopull、data-ciphers
+        # 修改配置
         if "auth-user-pass" not in ovpn_content:
             ovpn_content += f"\nauth-user-pass {auth_path}\n"
         ovpn_content += "\nroute-nopull\n"
@@ -181,51 +192,48 @@ class VpnManager:
             self.log(f"启动 OpenVPN 失败: {str(e)}")
             return False
 
-        # 监控 OpenVPN 输出，等待连接成功或进程退出
+        # 监控输出
         tun_ip = None
+        connected_flag = False
         start_time = time.time()
-        timeout = 20  # 缩短超时时间，快速失败
+        timeout = 25
 
         while time.time() - start_time < timeout:
-            # 检查进程是否还活着
             if self.vpn_process.poll() is not None:
                 self.log("OpenVPN 进程已退出，连接失败")
                 self.vpn_process = None
                 return False
 
-            # 读取一行输出
             line = self.vpn_process.stdout.readline()
             if not line:
-                # 如果没有数据，短暂休眠后继续
                 time.sleep(0.1)
                 continue
 
             self.log(f"[OpenVPN] {line.strip()}")
 
-            # 检测连接成功标志
             if "Peer Connection Initiated" in line:
-                self.log("检测到连接建立，正在获取 VPN IP...")
+                self.log("TLS 握手成功，等待配置...")
 
-            # 尝试从 ifconfig 行提取 IP
-            if "ifconfig" in line and "netmask" in line:
-                parts = line.split()
-                if len(parts) >= 2:
-                    tun_ip = parts[1]
-                    break
+            if "Initialization Sequence Completed" in line:
+                connected_flag = True
+                self.log("OpenVPN 初始化完成")
+                break
 
-        # 如果循环退出但未获取到 IP，尝试用 ip 命令获取
-        if not tun_ip:
-            try:
-                result = subprocess.run(["ip", "addr", "show", "dev", "tun0"], capture_output=True, text=True)
-                match = re.search(r"inet (\d+\.\d+\.\d+\.\d+)", result.stdout)
+            if "net_addr_ptp_v4_add" in line:
+                match = re.search(r"net_addr_ptp_v4_add: (\d+\.\d+\.\d+\.\d+)", line)
                 if match:
                     tun_ip = match.group(1)
-            except Exception:
-                pass
+                    self.log(f"从 OpenVPN 日志获取到 VPN IP: {tun_ip}")
+                    break
+
+        # 如果还没拿到 IP 但已连接，通过 ip addr 获取
+        if not tun_ip and connected_flag:
+            self.log("正在从系统获取 VPN IP...")
+            tun_ip = self._get_tun_ip()
 
         if not tun_ip:
             self.log("获取 VPN IP 失败，无法启动 SOCKS5 代理")
-            self.disconnect()   # 清理残留进程
+            self.disconnect()
             return False
 
         self.log(f"VPN 连接成功，本机 VPN IP: {tun_ip}")
@@ -327,7 +335,6 @@ class VpnManager:
             self.log("所有节点均不可用，等待下次检测")
 
     def start(self):
-        """启动 VPN 连接，尝试所有节点直到成功"""
         self._stop_event.clear()
         self.fetch_nodes()
         nodes = self.filter_nodes(self.config["region"])
@@ -340,14 +347,13 @@ class VpnManager:
                 connected = True
                 break
             self.log(f"节点 {node['hostname']} 连接失败，尝试下一个...")
-            time.sleep(1)  # 短暂间隔，避免频繁重试
+            time.sleep(1)
 
         if not connected:
             self.log("所有节点均连接失败，请检查网络或更换地区")
         else:
             self.log("VPN 连接成功建立")
 
-        # 启动健康检测和后台检测线程
         self._health_thread = threading.Thread(target=self.health_check_loop, daemon=True)
         self._health_thread.start()
         self._bg_check_thread = threading.Thread(target=self.background_check_nodes, daemon=True)
