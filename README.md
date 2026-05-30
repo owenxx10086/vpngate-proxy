@@ -18,6 +18,7 @@
 
 ## 📁 项目结构
 
+```
 vpngate-proxy/
 ├── .github/workflows/
 │ └── docker-build.yml # GitHub Actions 自动构建并推送镜像
@@ -32,3 +33,4 @@ vpngate-proxy/
 ├── Dockerfile
 ├── requirements.txt
 └── README.md
+```
