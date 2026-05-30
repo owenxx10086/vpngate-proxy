@@ -150,22 +150,25 @@
             });
             tbody.innerHTML = html || "<tr><td colspan='5'>无节点数据</td></tr>";
         }
-
         async function refreshNodes() {
             const region = document.getElementById("region-filter").value;
             localStorage.setItem("selectedRegion", region);
             try {
                 const res = await fetch(`/api/nodes?region=${encodeURIComponent(region)}`);
+                if (!res.ok) {
+                    // 尝试解析 JSON 错误
+                    const errData = await res.json().catch(() => ({}));
+                    throw new Error(errData.error || `HTTP ${res.status}`);
+                }
                 const nodes = await res.json();
                 allNodes = nodes;
                 renderNodeTable(nodes);
-                // 只在“所有地区”时更新筛选器，保留用户选择
                 if (region === "all") {
                     populateRegionFilter(nodes);
                 }
                 document.getElementById("region-filter").value = region;
             } catch(e) {
-                alert("获取节点列表失败: " + e);
+                alert("获取节点列表失败: " + e.message);
             }
         }
 
