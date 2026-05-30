@@ -1,5 +1,6 @@
 import json
 import os
+import secrets
 
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
 
@@ -13,16 +14,22 @@ DEFAULT_CONFIG = {
     "region": "all",
     "node_limit": 200,
     "check_limit": 20,
-    "secret_key": ""
+    "secret_key": ""   # 初始为空，首次运行自动生成
 }
 
 def load_config():
     if not os.path.exists(CONFIG_PATH):
-        return DEFAULT_CONFIG.copy()
+        cfg = DEFAULT_CONFIG.copy()
+        cfg["secret_key"] = secrets.token_hex(24)
+        save_config(cfg)
+        return cfg
     with open(CONFIG_PATH, "r", encoding="utf-8") as f:
         cfg = json.load(f)
     for k, v in DEFAULT_CONFIG.items():
         cfg.setdefault(k, v)
+    if not cfg.get("secret_key"):
+        cfg["secret_key"] = secrets.token_hex(24)
+        save_config(cfg)
     return cfg
 
 def save_config(cfg):
