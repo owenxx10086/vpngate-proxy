@@ -62,7 +62,6 @@ class VpnManager:
             text = resp.text
             lines = text.splitlines()
 
-            # 查找表头行（以 #HostName 开头）
             header_index = None
             for i, line in enumerate(lines):
                 if line.strip().startswith("#HostName"):
@@ -73,7 +72,6 @@ class VpnManager:
                 self.log("未找到节点表头，可能 API 格式变化")
                 return
 
-            # 从表头行开始，收集所有非空行作为 CSV
             csv_lines = [lines[header_index]]
             for line in lines[header_index+1:]:
                 if line.strip() == "":
@@ -109,15 +107,13 @@ class VpnManager:
             self.log(f"获取节点列表失败: {str(e)}")
 
     def filter_nodes(self, region="all"):
-        # 线程安全复制
         nodes = list(self.nodes)
         if region == "all":
             return nodes
-        # 安全处理 None 值
         return [n for n in nodes if (n.get("country_short") or "").upper() == region.upper()]
 
     def detect_ip(self, ip):
-        """使用 ip-api.com 检测 IP 信息（免费，无需 API Key）"""
+        """使用 ip-api.com 检测 IP 信息"""
         try:
             url = f"http://ip-api.com/json/{ip}?fields=status,message,country,countryCode,region,regionName,city,isp,proxy,hosting,mobile,query"
             resp = requests.get(url, timeout=10)
@@ -143,7 +139,6 @@ class VpnManager:
         return True
 
     def _get_tun_info(self):
-        """获取最新的 tun 接口 IP 和名称"""
         try:
             result = subprocess.run(["ip", "addr", "show"], capture_output=True, text=True)
             matches = re.findall(r"(tun\d+):\s.*?\n\s+inet (\d+\.\d+\.\d+\.\d+)", result.stdout, re.DOTALL)
@@ -155,7 +150,6 @@ class VpnManager:
         return None, None
 
     def _setup_policy_routing(self, ip, dev):
-        """配置策略路由：源 IP 为 ip 的包走 dev 接口"""
         try:
             subprocess.run(["ip", "route", "add", "default", "dev", dev, "table", "100"], check=False)
             subprocess.run(["ip", "rule", "add", "from", ip, "table", "100"], check=False)
@@ -165,7 +159,6 @@ class VpnManager:
             self.log(f"配置策略路由失败: {e}")
 
     def _teardown_policy_routing(self, ip, dev):
-        """删除策略路由"""
         if not self.policy_routing_set:
             return
         try:
@@ -194,7 +187,6 @@ class VpnManager:
         if "auth-user-pass" not in ovpn_content:
             ovpn_content += f"\nauth-user-pass {auth_path}\n"
 
-        # 使用 route-nopull 防止路由被 OpenVPN 自动修改
         ovpn_content += "\nroute-nopull\n"
         ovpn_content += "\ndata-ciphers AES-256-GCM:AES-128-GCM:AES-128-CBC:CHACHA20-POLY1305\n"
 
@@ -264,7 +256,6 @@ class VpnManager:
         self.tun_ip = tun_ip
         self.health_fail_count = 0
 
-        # 配置策略路由，让源 IP 为 tun_ip 的包走 tun 接口
         self._setup_policy_routing(tun_ip, tun_dev)
 
         self.log(f"VPN 连接成功，本机 VPN IP: {tun_ip}, 接口: {tun_dev}")
@@ -282,7 +273,6 @@ class VpnManager:
         return True
 
     def disconnect(self):
-        # 清理策略路由
         if self.tun_ip and self.tun_dev:
             self._teardown_policy_routing(self.tun_ip, self.tun_dev)
 
@@ -319,7 +309,6 @@ class VpnManager:
             return "127.0.0.1"
 
     def _is_tunnel_alive(self):
-        """检查隧道是否存活：进程存在 + 接口存在且有 IP"""
         if not self.vpn_process or self.vpn_process.poll() is not None:
             return False
         if not self.tun_dev or not self.tun_ip:
@@ -362,7 +351,8 @@ class VpnManager:
             nodes = self.filter_nodes(self.config["region"])
             self.log("开始后台节点检测...")
             available = []
-            for node in nodes[:20]:
+            check_limit = self.config.get("check_limit", 20)
+            for node in nodes[:check_limit]:
                 if self._stop_event.is_set():
                     break
                 if self.status["connected"] and node["ip"] == self.status["node_info"].get("ip"):
