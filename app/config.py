@@ -12,7 +12,8 @@ DEFAULT_CONFIG = {
     "vpn_pass": "vpn",
     "region": "all",
     "node_limit": 200,
-    "check_limit": 20
+    "check_limit": 20,
+    "secret_key": ""
 }
 
 def load_config():
