@@ -34,3 +34,22 @@ vpngate-proxy/
 ├── requirements.txt
 └── README.md
 ```
+
+## 🚀 快速开始
+
+### 前提条件
+
+- 一台 Linux 主机（或任何支持 Docker 的设备）
+- 需要暴露的端口未被占用（默认 `5000` 用于面板，`1080` 用于 SOCKS5）
+
+### 使用预构建镜像（推荐）
+
+```
+docker run -d \
+  --name vpn-proxy \
+  --cap-add=NET_ADMIN \
+  --device=/dev/net/tun \
+  -p 8080:8080 \
+  -p 1080:1080 \
+  ghcr.io/xiaowen-king/vpngate-proxy:latest
+```
