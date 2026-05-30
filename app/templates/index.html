@@ -100,6 +100,7 @@
                     </div>
                     <div class="mb-3"><label>节点数据上限</label><input type="number" class="form-control" id="cfg-node-limit" min="1" max="1000"></div>
                     <div class="mb-3"><label>检测数量上限</label><input type="number" class="form-control" id="cfg-check-limit" min="1" max="500"></div>
+                    <div class="mb-3"><label>自动更新间隔（分钟，0 为不自动）</label><input type="number" class="form-control" id="cfg-auto-update" min="0" max="1440"></div>
                     <button type="submit" class="btn btn-success">保存</button>
                     <button type="button" id="restart-btn" class="btn btn-danger ms-2">保存并重启服务</button>
                     <span id="settings-msg" class="ms-3"></span>
@@ -154,12 +155,12 @@
         const globalModal = new bootstrap.Modal(document.getElementById("globalModal"));
         let isConnecting = false;
         let modalVisible = false;
-        let allNodesCache = [];        // 全量节点缓存，用于下拉选项生成
-        let displayedNodes = [];       // 当前显示的节点（可用于后续功能）
+        let allNodesCache = [];
+        let displayedNodes = [];
         let isRefreshing = false;
-        let configRegion = "all";      // 存储从配置加载的默认地区
+        let configRegion = "all";
 
-        // 统一弹窗函数
+        // 统一弹窗
         function showMessage(title, message, type = "info") {
             document.getElementById("globalModalTitle").textContent = title;
             document.getElementById("globalModalBody").textContent = message;
@@ -181,7 +182,14 @@
 
         // 日志监听
         socket.on("log", (data) => {
-            const msg = `<div>${data.message}</div>`;
+            const rawMsg = data.message;
+            // 检测是否节点更新通知，不显示在日志中
+            if (rawMsg === "NODES_UPDATED") {
+                // 触发全量节点缓存更新
+                updateAllNodesCache();
+                return;
+            }
+            const msg = `<div>${rawMsg}</div>`;
             logPanel.innerHTML += msg;
             logPanel.scrollTop = logPanel.scrollHeight;
             if (modalVisible) {
@@ -273,14 +281,12 @@
             document.getElementById("cfg-region-current").textContent = displayText;
         }
 
-        // 更新节点列表地区筛选器（始终从缓存生成）
         function populateRegionFilter() {
             const select = document.getElementById("region-filter");
             const currentVal = select.value || localStorage.getItem("selectedRegion") || "all";
             select.innerHTML = buildRegionOptions(currentVal);
         }
 
-        // 更新设置页地区下拉（始终从缓存生成，并正确选中）
         function updateSettingsRegionDropdown() {
             const select = document.getElementById("cfg-region");
             const selVal = configRegion || "all";
@@ -288,7 +294,6 @@
             updateCurrentRegionText();
         }
 
-        // 渲染节点表格
         function renderNodeTable(nodes) {
             const tbody = document.getElementById("node-table");
             let html = "";
@@ -323,22 +328,19 @@
             document.querySelectorAll(".connect-btn").forEach(btn => { btn.disabled = state; });
         }
 
-        // 获取全量节点缓存（仅调用一次）
-        async function fetchAllNodesCache() {
+        async function updateAllNodesCache() {
             try {
                 const res = await fetch("/api/nodes?region=all");
                 if (res.ok) {
                     allNodesCache = await res.json();
-                    // 更新两个下拉框
                     populateRegionFilter();
                     updateSettingsRegionDropdown();
                 }
             } catch(e) {
-                console.error("获取全量节点失败:", e);
+                console.error("更新全量节点缓存失败:", e);
             }
         }
 
-        // 刷新节点列表（仍请求后端，但下拉不受影响）
         async function refreshNodes() {
             if (isRefreshing) return;
             const btn = document.getElementById("refresh-btn");
@@ -348,6 +350,7 @@
             status.textContent = "刷新中...";
             const region = document.getElementById("region-filter").value;
             localStorage.setItem("selectedRegion", region);
+
             try {
                 const res = await fetch(`/api/nodes?region=${encodeURIComponent(region)}`);
                 if (!res.ok) {
@@ -358,13 +361,14 @@
                 displayedNodes = nodes;
                 renderNodeTable(nodes);
                 updateStats(nodes);
-                // 下拉选项保持基于缓存（如果缓存为空，不覆盖）
-                if (allNodesCache.length === 0) {
-                    // 首次可能还没有缓存，用返回的数据暂代
+
+                if (region !== "all") {
+                    await updateAllNodesCache();
+                } else {
                     allNodesCache = nodes;
+                    populateRegionFilter();
+                    updateSettingsRegionDropdown();
                 }
-                populateRegionFilter();
-                updateSettingsRegionDropdown();
                 status.textContent = "刷新完成";
                 setTimeout(() => { status.textContent = ""; }, 2000);
             } catch(e) {
@@ -377,12 +381,11 @@
             }
         }
 
-        // 地区筛选器变化时自动刷新（不改变下拉选项）
         document.getElementById("region-filter").addEventListener("change", () => {
             refreshNodes();
         });
 
-        // 连接节点逻辑（保持不变）
+        // 连接节点逻辑
         async function connectNode(ip, depth = 0) {
             if (isConnecting && depth === 0) return;
             const MAX_RETRIES = 3;
@@ -469,7 +472,7 @@
         document.getElementById("modal-cancel-btn").addEventListener("click", closeModal);
         document.getElementById("modal-close-btn").addEventListener("click", closeModal);
 
-        // 仪表盘按钮（统一确认弹窗）
+        // 仪表盘按钮
         document.getElementById("disconnect-btn").addEventListener("click", () => {
             showConfirm("断开连接", "确定要断开当前 VPN 连接吗？", async (confirmed) => {
                 if (!confirmed) return;
@@ -506,7 +509,7 @@
             });
         });
 
-        // 保存并重启按钮
+        // 保存并重启
         document.getElementById("restart-btn").addEventListener("click", () => {
             showConfirm("保存并重启服务", "将保存当前设置并重启服务，确定继续？", async (confirmed) => {
                 if (!confirmed) return;
@@ -519,7 +522,8 @@
                     vpn_pass: document.getElementById("cfg-vpn-pass").value,
                     region: document.getElementById("cfg-region").value,
                     node_limit: parseInt(document.getElementById("cfg-node-limit").value),
-                    check_limit: parseInt(document.getElementById("cfg-check-limit").value)
+                    check_limit: parseInt(document.getElementById("cfg-check-limit").value),
+                    auto_update_interval: parseInt(document.getElementById("cfg-auto-update").value) || 0
                 };
                 try {
                     const saveRes = await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(newCfg) });
@@ -533,7 +537,7 @@
             });
         });
 
-        // 加载设置表单
+        // 加载设置
         async function loadSettings() {
             try {
                 const res = await fetch("/api/config");
@@ -546,18 +550,17 @@
                 document.getElementById("cfg-vpn-pass").value = cfg.vpn_pass || "";
                 document.getElementById("cfg-node-limit").value = cfg.node_limit || 200;
                 document.getElementById("cfg-check-limit").value = cfg.check_limit || 20;
+                document.getElementById("cfg-auto-update").value = cfg.auto_update_interval || 0;
                 configRegion = cfg.region || "all";
-                // 如果缓存已有数据，立即更新下拉（否则等 fetchAllNodesCache 完成后更新）
                 if (allNodesCache.length > 0) {
                     updateSettingsRegionDropdown();
                 } else {
-                    // 缓存为空时，仅显示文字提示
                     updateCurrentRegionText();
                 }
             } catch(e) { console.error("加载设置失败", e); }
         }
 
-        // 普通保存按钮
+        // 普通保存
         document.getElementById("settings-form").addEventListener("submit", async (e) => {
             e.preventDefault();
             const newCfg = {
@@ -569,7 +572,8 @@
                 vpn_pass: document.getElementById("cfg-vpn-pass").value,
                 region: document.getElementById("cfg-region").value,
                 node_limit: parseInt(document.getElementById("cfg-node-limit").value),
-                check_limit: parseInt(document.getElementById("cfg-check-limit").value)
+                check_limit: parseInt(document.getElementById("cfg-check-limit").value),
+                auto_update_interval: parseInt(document.getElementById("cfg-auto-update").value) || 0
             };
             const msg = document.getElementById("settings-msg");
             try {
@@ -603,11 +607,10 @@
             }
         }
 
-        // 页面初始化：加载设置、获取全量节点缓存、加载系统信息
+        // 页面初始化
         document.addEventListener("DOMContentLoaded", () => {
             loadSettings();
-            fetchAllNodesCache().then(() => {
-                // 缓存就绪后首次刷新节点列表（默认 region=all）
+            updateAllNodesCache().then(() => {
                 refreshNodes();
             });
             loadSystemInfo();
