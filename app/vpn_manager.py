@@ -49,20 +49,34 @@ class VpnManager:
         config.save_config(cfg)
 
     def fetch_nodes(self):
+        """获取 VPN Gate 节点列表"""
         self.log("正在获取节点列表...")
         try:
             resp = requests.get(self.config["api_url"], timeout=30)
             resp.encoding = "utf-8"
             text = resp.text
-            # 原始数据可能包含 BOM 和注释行
-            # 寻找第一个空行后的有效 CSV 数据
             lines = text.splitlines()
-            start = 0
+
+            # 查找表头行（以 #HostName 开头）
+            header_index = None
             for i, line in enumerate(lines):
-                if line.strip() == "":
-                    start = i + 1
+                if line.strip().startswith("#HostName"):
+                    header_index = i
                     break
-            csv_text = "\n".join(lines[start:])
+
+            if header_index is None:
+                self.log("未找到节点表头，可能 API 格式变化")
+                return
+
+            # 从表头行开始，后续都是 CSV 数据
+            csv_lines = [lines[header_index]]  # 表头
+            for line in lines[header_index+1:]:
+                # 跳过空白行
+                if line.strip() == "":
+                    continue
+                csv_lines.append(line)
+
+            csv_text = "\n".join(csv_lines)
             reader = csv.DictReader(io.StringIO(csv_text))
             nodes = []
             for row in reader:
@@ -106,15 +120,13 @@ class VpnManager:
             soup = BeautifulSoup(resp.text, "html.parser")
             data = {}
             # 解析常见字段，根据页面实际结构调整
-            # 示例：风控、原生IP、大模型检测等在页面中可能以表格或卡片形式存在
-            # 这里进行基础解析
             items = soup.select("div.card-body .row .col")
             for item in items:
                 text = item.get_text(strip=True)
                 if ":" in text:
                     key, val = text.split(":", 1)
                     data[key.strip()] = val.strip()
-            # 补充一些特定字段的解析（示例：通过类名或ID）
+            # 补充一些特定字段的解析
             risk_el = soup.find(string=re.compile("风控", re.IGNORECASE))
             if risk_el:
                 data["风险值"] = risk_el.find_next().get_text(strip=True)
@@ -133,9 +145,8 @@ class VpnManager:
             return None
 
     def test_node(self, node):
-        """测试节点是否可用（尝试连接并做简单检查）"""
-        # 这里省略真实连接测试，直接返回 True 用于演示。
-        # 实际可以用调用 openvpn 连接并 ping 检测。
+        """测试节点是否可用（占位，实际可做连通性检查）"""
+        # TODO: 实现真正的连通性测试，例如 TCP 连接或 ICMP ping
         return True
 
     def connect_node(self, node):
@@ -185,16 +196,13 @@ class VpnManager:
                 continue
             self.log(f"[OpenVPN] {line.strip()}")
             if "Peer Connection Initiated" in line:
-                # 成功连接，获取 IP 地址
                 pass
             if "ifconfig" in line and "netmask" in line:
-                # 从 ifconfig 输出解析 IP
                 parts = line.split()
                 if len(parts) >= 2:
                     tun_ip = parts[1]
                     break
         if not tun_ip:
-            # 也可以手动运行 ip addr 获取
             try:
                 result = subprocess.run(["ip", "addr", "show", "dev", "tun0"], capture_output=True, text=True)
                 match = re.search(r"inet (\d+\.\d+\.\d+\.\d+)", result.stdout)
@@ -216,8 +224,8 @@ class VpnManager:
 
         self.status["connected"] = True
         self.status["node_info"] = node
-        self.status["socks"] = f"socks5://{self._get_host_ip()}:{socks_port}"  # 假设容器 IP 或宿主机端口映射
-        self.status["ip_info"] = self.detect_ip(node["ip"])  # 检测节点 IP 信息
+        self.status["socks"] = f"socks5://{self._get_host_ip()}:{socks_port}"
+        self.status["ip_info"] = self.detect_ip(node["ip"])
         self.log(f"SOCKS5 代理已启动: {self.status['socks']}")
         return True
 
@@ -238,7 +246,7 @@ class VpnManager:
         self.status["socks"] = ""
 
     def _get_host_ip(self):
-        # 获取容器对外 IP（供外部访问 socks）
+        """获取容器对外 IP（供外部访问 socks）"""
         import socket
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -255,7 +263,6 @@ class VpnManager:
             time.sleep(10)
             if not self.status["connected"]:
                 continue
-            # 简单检测：尝试通过 tun0 ping 一个公网 IP（或请求检测）
             try:
                 output = subprocess.run(
                     ["ping", "-c", "1", "-W", "3", "-I", "tun0", "8.8.8.8"],
@@ -271,16 +278,15 @@ class VpnManager:
     def background_check_nodes(self):
         """定时检测其他节点，保持可用节点列表"""
         while not self._stop_event.is_set():
-            time.sleep(60)  # 每分钟检测一批
+            time.sleep(60)
             if self._stop_event.is_set():
                 break
             nodes = self.filter_nodes(self.config["region"])
             self.log("开始后台节点检测...")
             available = []
-            for node in nodes[:20]:  # 最多检测 20 个
+            for node in nodes[:20]:
                 if self._stop_event.is_set():
                     break
-                # 跳过当前节点
                 if self.status["connected"] and node["ip"] == self.status["node_info"].get("ip"):
                     continue
                 if self.test_node(node):
@@ -311,13 +317,11 @@ class VpnManager:
     def start(self):
         self._stop_event.clear()
         self.fetch_nodes()
-        # 先自动连接第一个可用节点
         nodes = self.filter_nodes(self.config["region"])
         for node in nodes:
             if self.test_node(node):
                 self.connect_node(node)
                 break
-        # 启动健康检测和后台检测线程
         self._health_thread = threading.Thread(target=self.health_check_loop, daemon=True)
         self._health_thread.start()
         self._bg_check_thread = threading.Thread(target=self.background_check_nodes, daemon=True)
