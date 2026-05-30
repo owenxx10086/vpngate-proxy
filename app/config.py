@@ -14,7 +14,8 @@ DEFAULT_CONFIG = {
     "region": "all",
     "node_limit": 200,
     "check_limit": 20,
-    "secret_key": ""   # 初始为空，首次运行自动生成
+    "secret_key": "",               # 首次启动自动生成
+    "auto_update_interval": 0       # 自动更新间隔（分钟），0 表示不自动更新
 }
 
 def load_config():
