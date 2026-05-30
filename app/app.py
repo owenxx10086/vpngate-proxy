@@ -32,7 +32,6 @@ def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if not session.get("logged_in"):
-            # 对 API 请求返回 JSON 错误，避免前端解析 HTML
             if request.path.startswith("/api/"):
                 return jsonify({"error": "未登录"}), 401
             return redirect(url_for("login"))
@@ -66,11 +65,16 @@ def status():
     return jsonify(manager.status)
 
 @app.route("/api/nodes")
+@app.route("/api/nodes")
 @login_required
 def nodes():
     region = request.args.get("region", "all")
-    nodes = manager.filter_nodes(region)
-    return jsonify(nodes[:200])  # 限制数量
+    try:
+        nodes = manager.filter_nodes(region)
+        return jsonify(nodes[:200])
+    except Exception as e:
+        manager.log(f"API /api/nodes 异常: {str(e)}")
+        return jsonify({"error": f"服务器内部错误: {str(e)}"}), 500
 
 @app.route("/api/connect", methods=["POST"])
 @login_required
