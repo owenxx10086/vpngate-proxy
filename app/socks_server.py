@@ -11,7 +11,7 @@ class Socks5Server:
     def __init__(self, bind_host, bind_port, outbound_ip):
         self.bind_host = bind_host
         self.bind_port = bind_port
-        self.outbound_ip = outbound_ip  # VPN 接口 IP，用于 bind 出站连接
+        self.outbound_ip = outbound_ip
         self.server_socket = None
         self.running = False
         self.thread = None
@@ -46,76 +46,102 @@ class Socks5Server:
 
     def _handle_client(self, client_sock):
         try:
-            # 握手协商（仅支持无认证）
-            data = client_sock.recv(256)
+            # 握手
+            data = self._recv_all(client_sock, 256)
             if not data or data[0] != 0x05:
                 client_sock.close()
                 return
             n_methods = data[1]
             methods = data[2:2+n_methods]
             if 0x00 in methods:
-                client_sock.sendall(b"\x05\x00")  # 选择无认证
+                client_sock.sendall(b"\x05\x00")
             else:
                 client_sock.sendall(b"\x05\xff")
                 client_sock.close()
                 return
 
             # 接收请求
-            data = client_sock.recv(4)
+            data = self._recv_all(client_sock, 4)
             if not data or data[0] != 0x05:
                 client_sock.close()
                 return
             cmd = data[1]
             if cmd != 0x01:  # 只支持 CONNECT
-                client_sock.sendall(b"\x05\x07\x00\x01" + b"\x00\x00\x00\x00" + b"\x00\x00")
+                self._send_reply(client_sock, 0x07)
                 client_sock.close()
                 return
+
             addr_type = data[3]
             if addr_type == 0x01:  # IPv4
-                addr_data = client_sock.recv(4)
+                addr_data = self._recv_all(client_sock, 4)
                 target_addr = socket.inet_ntoa(addr_data)
             elif addr_type == 0x03:  # 域名
-                name_len = ord(client_sock.recv(1))
-                target_addr = client_sock.recv(name_len).decode()
+                name_len = self._recv_all(client_sock, 1)[0]
+                addr_data = self._recv_all(client_sock, name_len)
+                target_addr = addr_data.decode()
             else:
-                client_sock.sendall(b"\x05\x08\x00\x01" + b"\x00\x00\x00\x00" + b"\x00\x00")
+                self._send_reply(client_sock, 0x08)
                 client_sock.close()
                 return
-            port_data = client_sock.recv(2)
+            port_data = self._recv_all(client_sock, 2)
             target_port = struct.unpack(">H", port_data)[0]
 
             # 建立到目标的连接，并绑定出站 IP
             remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            remote.bind((self.outbound_ip, 0))   # 绑定 VPN 接口 IP
+            remote.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            remote.bind((self.outbound_ip, 0))
             remote.connect((target_addr, target_port))
             logger.debug(f"Proxying to {target_addr}:{target_port} via {self.outbound_ip}")
 
             # 回应成功
             bind_addr = remote.getsockname()
-            resp = b"\x05\x00\x00\x01" + socket.inet_aton(bind_addr[0]) + struct.pack(">H", bind_addr[1])
-            client_sock.sendall(resp)
+            reply = struct.pack("!BBBBIH", 0x05, 0x00, 0x00, 0x01,
+                                struct.unpack("!I", socket.inet_aton(bind_addr[0]))[0],
+                                bind_addr[1])
+            client_sock.sendall(reply)
 
-            # 双向转发
+            # 双向转发（使用更稳定的 select 方式）
             self._relay(client_sock, remote)
-        except Exception:
-            logger.exception("SOCKS5 handling error")
+        except Exception as e:
+            logger.error(f"SOCKS5 handling error: {e}")
         finally:
             try:
                 client_sock.close()
             except:
                 pass
 
+    def _send_reply(self, sock, rep):
+        """发送错误响应"""
+        sock.sendall(struct.pack("!BBBBIH", 0x05, rep, 0x00, 0x01, 0, 0))
+
+    def _recv_all(self, sock, length):
+        """接收指定长度的数据"""
+        data = b''
+        while len(data) < length:
+            chunk = sock.recv(length - len(data))
+            if not chunk:
+                return None
+            data += chunk
+        return data
+
     def _relay(self, a, b):
-        def forward(src, dst):
+        """双向转发数据，任一方向关闭则结束"""
+        import select
+        sockets = [a, b]
+        while True:
             try:
-                while True:
-                    data = src.recv(4096)
-                    if not data:
-                        break
-                    dst.sendall(data)
-            except:
-                pass
-        t1 = threading.Thread(target=forward, args=(a, b), daemon=True)
-        t2 = threading.Thread(target=forward, args=(b, a), daemon=True)
-        t1.start(); t2.start()
-        t1.join(); t2.join()
+                readable, _, exceptional = select.select(sockets, [], sockets, 10)
+            except (select.error, ValueError):
+                break
+            if exceptional:
+                break
+            for sock in readable:
+                data = sock.recv(4096)
+                if not data:
+                    # 一方关闭，结束转发
+                    return
+                other = b if sock is a else a
+                try:
+                    other.sendall(data)
+                except:
+                    return
