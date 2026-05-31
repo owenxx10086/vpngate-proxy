@@ -34,8 +34,8 @@ class VpnManager:
         self._stop_event = threading.Event()
         self._health_thread = None
         self._bg_check_thread = None
-        self._auto_update_thread = None          # 自动更新节点线程
-        self._auto_update_trigger = threading.Event()  # 用于唤醒自动更新线程
+        self._auto_update_thread = None
+        self._auto_update_trigger = threading.Event()
         self._log_callback = None
         self.tun_dev = None
         self.tun_ip = None
@@ -43,6 +43,7 @@ class VpnManager:
         self.max_health_fails = 3
         self._available_nodes = []
         self.policy_routing_set = False
+        self._failed_ips = set()   # 记录本轮切换中尝试失败的 IP
 
     def set_log_callback(self, cb):
         self._log_callback = cb
@@ -55,7 +56,6 @@ class VpnManager:
     def set_config(self, cfg):
         self.config = cfg
         config.save_config(cfg)
-        # 唤醒自动更新线程，使其立即检查新配置（例如间隔变化）
         self._auto_update_trigger.set()
 
     def fetch_nodes(self):
@@ -273,6 +273,9 @@ class VpnManager:
         self.status["socks"] = f"socks5://{self._get_host_ip()}:{socks_port}"
         self.status["ip_info"] = self.detect_ip(node["ip"])
         self.log(f"SOCKS5 代理已启动: {self.status['socks']}")
+
+        # 连接成功，清空失败记录
+        self._failed_ips.clear()
         return True
 
     def disconnect(self):
@@ -313,7 +316,7 @@ class VpnManager:
 
     # ---------- 修改了 _is_tunnel_alive 和 health_check_loop ----------
     def _is_tunnel_alive(self):
-        """使用 SOCKS5 代理访问 httpbin.org 验证代理是否真正可用"""
+        """使用 SOCKS5 代理访问 httpbin.org，只要请求成功就认为隧道可用"""
         # 首先检查进程是否存活
         if not self.vpn_process or self.vpn_process.poll() is not None:
             return False
@@ -330,7 +333,7 @@ class VpnManager:
         except Exception:
             return False
 
-        # 通过 SOCKS5 代理请求测试站点，验证隧道是否真正工作
+        # 通过 SOCKS5 代理请求测试站点，只验证连通性，不再比对 IP
         try:
             socks_port = self.config.get("socks_port", 1080)
             result = subprocess.run(
@@ -338,18 +341,13 @@ class VpnManager:
                  "http://httpbin.org/ip"],
                 capture_output=True, text=True, timeout=10
             )
-            if result.returncode != 0:
-                self.log(f"curl 检测失败: {result.stderr.strip()}")
-                return False
-            # 解析返回的 JSON
-            data = json.loads(result.stdout)
-            returned_ip = data.get("origin", "")
-            node_ip = self.status["node_info"].get("ip", "")
-            if returned_ip and returned_ip == node_ip:
-                return True
-            else:
-                self.log(f"代理返回 IP ({returned_ip}) 与节点 IP ({node_ip}) 不符")
-                return False
+            if result.returncode == 0:
+                data = json.loads(result.stdout)
+                if "origin" in data:
+                    # 成功获取到出口 IP，说明代理工作正常
+                    return True
+            self.log(f"curl 检测失败: {result.stderr.strip()}")
+            return False
         except Exception as e:
             self.log(f"SOCKS5 代理检测异常: {e}")
             return False
@@ -394,21 +392,17 @@ class VpnManager:
             self.log(f"当前可用节点: {len(available)} 个")
 
     def _auto_update_loop(self):
-        """根据配置的间隔自动拉取节点列表，可通过 _auto_update_trigger 唤醒"""
         while not self._stop_event.is_set():
             interval_min = self.config.get("auto_update_interval", 0)
             if interval_min <= 0:
-                # 不自动更新，等待1小时后再次检查（或等待触发）
                 self._auto_update_trigger.wait(3600)
                 self._auto_update_trigger.clear()
                 continue
             interval_sec = interval_min * 60
-            # 可中断的等待
             self._auto_update_trigger.wait(interval_sec)
             self._auto_update_trigger.clear()
             if self._stop_event.is_set():
                 break
-            # 再次检查间隔（可能在等待中被修改）
             current_interval = self.config.get("auto_update_interval", 0)
             if current_interval <= 0:
                 continue
@@ -425,17 +419,24 @@ class VpnManager:
             for node in nodes:
                 if self._stop_event.is_set():
                     break
+                # 跳过已尝试失败的节点
+                if node["ip"] in self._failed_ips:
+                    continue
                 if self.status["connected"] and node["ip"] == self.status["node_info"].get("ip"):
                     continue
+                # 记录当前尝试的 IP
+                self._failed_ips.add(node["ip"])
+                self.log(f"尝试节点: {node['hostname']} ({node['ip']})")
                 if self.test_node(node):
-                    self.log(f"切换到节点: {node['hostname']}")
-                    self.connect_node(node)
-                    return
+                    success = self.connect_node(node)
+                    if success:
+                        return
             self.log("所有节点均不可用，等待下次检测")
 
     def start(self):
         self._stop_event.clear()
         self._auto_update_trigger.clear()
+        self._failed_ips.clear()
         self.fetch_nodes()
         nodes = self.filter_nodes(self.config["region"])
 
