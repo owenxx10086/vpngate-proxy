@@ -169,7 +169,7 @@ services:
 
 ## 常见问题
 
-使用vpngate的aip链接（https://www.vpngate.net/api/iphone/）获取不到节点信息怎么办？
+### 一、使用vpngate的aip链接（https://www.vpngate.net/api/iphone/）获取不到节点信息怎么办？
 
 如果使用vpngate的api链接获取不到节点信息是被屏蔽了，可以利用CF（cloudflare）免费的Workers 和 Pages来做中转
 
@@ -215,6 +215,10 @@ export default {
   }
 };
 ```
+
+### 二、当前连接的节点不在节点列表里面
+
+这种情况正常，因为gate的节点非常多，但是gate的API只能每次获取一百个节点左右，只要当前节点通过健康检测就可以正常使用
 
 ## 联系方式
 
