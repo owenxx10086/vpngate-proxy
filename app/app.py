@@ -193,9 +193,9 @@ def system_info():
     try:
         with open("/app/version.txt", "r") as f:
             version = f.read().strip()
-        info["镜像版本"] = version
+        info["镜像SHA"] = version
     except Exception:
-        info["镜像版本"] = "未知"
+        info["镜像SHA"] = "未知"
     return jsonify(info)
 
 # ---------- 新增：历史日志接口 ----------
