@@ -3,8 +3,42 @@ import socket
 import struct
 import threading
 import logging
+from logging.handlers import TimedRotatingFileHandler
+import os
 
+# ---------- 独立错误日志配置 ----------
+# 读取日志保留天数（与主日志保持一致）
+try:
+    import config
+    log_retention = config.load_config().get("log_retention_days", 3)
+except Exception:
+    log_retention = 3
+
+# 确保日志目录存在
+log_dir = "/data/logs"
+os.makedirs(log_dir, exist_ok=True)
+
+# 获取 socks_server 专用的 logger
 logger = logging.getLogger("socks_server")
+logger.setLevel(logging.INFO)  # 保持原有级别（INFO 以上消息会传播到根 logger）
+
+# 添加独立的文件 handler（只记录 ERROR 级别）
+error_log_file = os.path.join(log_dir, "socks-errors.log")
+# 避免重复添加 handler
+if not any(isinstance(h, TimedRotatingFileHandler) and h.baseFilename == os.path.abspath(error_log_file)
+           for h in logger.handlers):
+    file_handler = TimedRotatingFileHandler(
+        error_log_file,
+        when="midnight",
+        interval=1,
+        backupCount=log_retention,
+        encoding="utf-8"
+    )
+    file_handler.setLevel(logging.ERROR)
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+# -----------------------------------------
 
 class Socks5Server:
     """极简 SOCKS5 代理，出口流量绑定到指定接口 IP"""
@@ -60,18 +94,15 @@ class Socks5Server:
     def _handle_client(self, client_sock):
         try:
             # ---- 握手阶段 ----
-            # 接收版本和认证方法数量（至少 2 字节）
             header = self._recv_exact(client_sock, 2)
             if not header or header[0] != 0x05:
                 client_sock.close()
                 return
             n_methods = header[1]
-            # 接收认证方法列表
             methods = self._recv_exact(client_sock, n_methods)
             if not methods:
                 client_sock.close()
                 return
-            # 选择无认证方式
             if 0x00 in methods:
                 client_sock.sendall(b"\x05\x00")
             else:
@@ -80,7 +111,6 @@ class Socks5Server:
                 return
 
             # ---- 请求阶段 ----
-            # 接收请求头（4 字节）
             req_header = self._recv_exact(client_sock, 4)
             if not req_header or req_header[0] != 0x05:
                 client_sock.close()
