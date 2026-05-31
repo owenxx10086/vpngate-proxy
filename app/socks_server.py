@@ -7,22 +7,18 @@ from logging.handlers import TimedRotatingFileHandler
 import os
 
 # ---------- 独立错误日志配置 ----------
-# 读取日志保留天数（与主日志保持一致）
 try:
     import config
     log_retention = config.load_config().get("log_retention_days", 3)
 except Exception:
     log_retention = 3
 
-# 确保日志目录存在
 log_dir = "/data/logs"
 os.makedirs(log_dir, exist_ok=True)
 
-# 获取 socks_server 专用的 logger
 logger = logging.getLogger("socks_server")
-logger.setLevel(logging.INFO)  # 保持原有级别（INFO 以上消息会传播到根 logger）
+logger.setLevel(logging.INFO)   # 保持原有级别
 
-# 添加独立的文件 handler（只记录 ERROR 级别）
 error_log_file = os.path.join(log_dir, "socks-errors.log")
 # 避免重复添加 handler
 if not any(isinstance(h, TimedRotatingFileHandler) and h.baseFilename == os.path.abspath(error_log_file)
@@ -38,6 +34,9 @@ if not any(isinstance(h, TimedRotatingFileHandler) and h.baseFilename == os.path
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
+
+# 阻止错误消息传播到根 logger（主日志文件）
+logger.propagate = False
 # -----------------------------------------
 
 class Socks5Server:
