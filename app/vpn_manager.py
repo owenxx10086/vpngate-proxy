@@ -391,7 +391,6 @@ class VpnManager:
             urls = [
                 "http://www.google.com",
                 "http://www.bing.com",
-                "http://httpbin.org/ip"
             ]
 
         socks_port = self.config.get("socks_port", 1080)
