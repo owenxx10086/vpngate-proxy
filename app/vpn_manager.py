@@ -29,7 +29,8 @@ class VpnManager:
             "connected": False,
             "node_info": {},
             "ip_info": None,
-            "socks": ""
+            "socks": "",
+            "connected_since": None   # 新增：连接开始时间（ISO格式字符串）
         }
         self._stop_event = threading.Event()
         self._health_thread = None
@@ -304,10 +305,27 @@ class VpnManager:
         self.status["socks"] = f"socks5://{self._get_host_ip()}:{socks_port}"
         self.status["ip_info"] = self.detect_ip(node["ip"])
         self.log(f"SOCKS5 代理已启动: {self.status['socks']}")
+
+        # 记录连接开始时间
+        self.status["connected_since"] = datetime.now().isoformat()
         self._failed_ips.clear()
         return True
 
     def disconnect(self):
+        # 如果有连接开始时间，计算并记录使用时长
+        if self.status.get("connected_since") and self.status.get("node_info"):
+            try:
+                start = datetime.fromisoformat(self.status["connected_since"])
+                duration = datetime.now() - start
+                # 只保留到秒，去除微秒
+                duration_str = str(duration).split('.')[0]
+                hostname = self.status["node_info"].get("hostname", "")
+                ip = self.status["node_info"].get("ip", "")
+                self.log(f"节点 {hostname} ({ip}) 已断开，使用时长: {duration_str}")
+            except Exception:
+                pass
+        self.status["connected_since"] = None
+
         if self.tun_ip and self.tun_dev:
             self._teardown_policy_routing(self.tun_ip, self.tun_dev)
 
