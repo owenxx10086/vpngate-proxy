@@ -44,15 +44,34 @@ class Socks5Server:
                     logger.exception("Accept error")
                 break
 
+    def _recv_exact(self, sock, length):
+        """接收指定长度的数据"""
+        data = b''
+        while len(data) < length:
+            try:
+                chunk = sock.recv(length - len(data))
+                if not chunk:
+                    return None
+                data += chunk
+            except Exception:
+                return None
+        return data
+
     def _handle_client(self, client_sock):
         try:
-            # 握手
-            data = self._recv_all(client_sock, 256)
-            if not data or data[0] != 0x05:
+            # ---- 握手阶段 ----
+            # 接收版本和认证方法数量（至少 2 字节）
+            header = self._recv_exact(client_sock, 2)
+            if not header or header[0] != 0x05:
                 client_sock.close()
                 return
-            n_methods = data[1]
-            methods = data[2:2+n_methods]
+            n_methods = header[1]
+            # 接收认证方法列表
+            methods = self._recv_exact(client_sock, n_methods)
+            if not methods:
+                client_sock.close()
+                return
+            # 选择无认证方式
             if 0x00 in methods:
                 client_sock.sendall(b"\x05\x00")
             else:
@@ -60,47 +79,62 @@ class Socks5Server:
                 client_sock.close()
                 return
 
-            # 接收请求
-            data = self._recv_all(client_sock, 4)
-            if not data or data[0] != 0x05:
+            # ---- 请求阶段 ----
+            # 接收请求头（4 字节）
+            req_header = self._recv_exact(client_sock, 4)
+            if not req_header or req_header[0] != 0x05:
                 client_sock.close()
                 return
-            cmd = data[1]
+            cmd = req_header[1]
             if cmd != 0x01:  # 只支持 CONNECT
                 self._send_reply(client_sock, 0x07)
                 client_sock.close()
                 return
 
-            addr_type = data[3]
+            addr_type = req_header[3]
             if addr_type == 0x01:  # IPv4
-                addr_data = self._recv_all(client_sock, 4)
+                addr_data = self._recv_exact(client_sock, 4)
+                if not addr_data:
+                    client_sock.close()
+                    return
                 target_addr = socket.inet_ntoa(addr_data)
             elif addr_type == 0x03:  # 域名
-                name_len = self._recv_all(client_sock, 1)[0]
-                addr_data = self._recv_all(client_sock, name_len)
+                name_len_byte = self._recv_exact(client_sock, 1)
+                if not name_len_byte:
+                    client_sock.close()
+                    return
+                name_len = name_len_byte[0]
+                addr_data = self._recv_exact(client_sock, name_len)
+                if not addr_data:
+                    client_sock.close()
+                    return
                 target_addr = addr_data.decode()
             else:
                 self._send_reply(client_sock, 0x08)
                 client_sock.close()
                 return
-            port_data = self._recv_all(client_sock, 2)
+
+            port_data = self._recv_exact(client_sock, 2)
+            if not port_data:
+                client_sock.close()
+                return
             target_port = struct.unpack(">H", port_data)[0]
 
-            # 建立到目标的连接，并绑定出站 IP
+            # ---- 建立到目标服务器的连接 ----
             remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             remote.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             remote.bind((self.outbound_ip, 0))
             remote.connect((target_addr, target_port))
             logger.debug(f"Proxying to {target_addr}:{target_port} via {self.outbound_ip}")
 
-            # 回应成功
+            # ---- 发送成功响应 ----
             bind_addr = remote.getsockname()
-            reply = struct.pack("!BBBBIH", 0x05, 0x00, 0x00, 0x01,
-                                struct.unpack("!I", socket.inet_aton(bind_addr[0]))[0],
-                                bind_addr[1])
+            reply = struct.pack("!BBBB", 0x05, 0x00, 0x00, 0x01) + \
+                    socket.inet_aton(bind_addr[0]) + \
+                    struct.pack("!H", bind_addr[1])
             client_sock.sendall(reply)
 
-            # 双向转发（使用更稳定的 select 方式）
+            # ---- 双向转发 ----
             self._relay(client_sock, remote)
         except Exception as e:
             logger.error(f"SOCKS5 handling error: {e}")
@@ -113,16 +147,6 @@ class Socks5Server:
     def _send_reply(self, sock, rep):
         """发送错误响应"""
         sock.sendall(struct.pack("!BBBBIH", 0x05, rep, 0x00, 0x01, 0, 0))
-
-    def _recv_all(self, sock, length):
-        """接收指定长度的数据"""
-        data = b''
-        while len(data) < length:
-            chunk = sock.recv(length - len(data))
-            if not chunk:
-                return None
-            data += chunk
-        return data
 
     def _relay(self, a, b):
         """双向转发数据，任一方向关闭则结束"""
@@ -138,7 +162,6 @@ class Socks5Server:
             for sock in readable:
                 data = sock.recv(4096)
                 if not data:
-                    # 一方关闭，结束转发
                     return
                 other = b if sock is a else a
                 try:
