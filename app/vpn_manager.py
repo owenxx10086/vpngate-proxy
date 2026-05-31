@@ -311,21 +311,48 @@ class VpnManager:
         except Exception:
             return "127.0.0.1"
 
+    # ---------- 修改了 _is_tunnel_alive 和 health_check_loop ----------
     def _is_tunnel_alive(self):
+        """使用 SOCKS5 代理访问 httpbin.org 验证代理是否真正可用"""
+        # 首先检查进程是否存活
         if not self.vpn_process or self.vpn_process.poll() is not None:
             return False
+        # 然后检查接口是否存在
         if not self.tun_dev or not self.tun_ip:
             return False
         try:
-            result = subprocess.run(
+            ip_check = subprocess.run(
                 ["ip", "addr", "show", "dev", self.tun_dev],
                 capture_output=True, text=True, timeout=5
             )
-            if result.returncode != 0 or self.tun_ip not in result.stdout:
+            if ip_check.returncode != 0 or self.tun_ip not in ip_check.stdout:
                 return False
         except Exception:
             return False
-        return True
+
+        # 通过 SOCKS5 代理请求测试站点，验证隧道是否真正工作
+        try:
+            socks_port = self.config.get("socks_port", 1080)
+            result = subprocess.run(
+                ["curl", "-s", "--socks5", f"127.0.0.1:{socks_port}", "--max-time", "8",
+                 "http://httpbin.org/ip"],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode != 0:
+                self.log(f"curl 检测失败: {result.stderr.strip()}")
+                return False
+            # 解析返回的 JSON
+            data = json.loads(result.stdout)
+            returned_ip = data.get("origin", "")
+            node_ip = self.status["node_info"].get("ip", "")
+            if returned_ip and returned_ip == node_ip:
+                return True
+            else:
+                self.log(f"代理返回 IP ({returned_ip}) 与节点 IP ({node_ip}) 不符")
+                return False
+        except Exception as e:
+            self.log(f"SOCKS5 代理检测异常: {e}")
+            return False
 
     def health_check_loop(self):
         while not self._stop_event.is_set():
@@ -336,7 +363,7 @@ class VpnManager:
 
             if self._is_tunnel_alive():
                 self.health_fail_count = 0
-                self.log("健康检测成功：OpenVPN 进程和 tun 接口正常")
+                # 成功时不记录日志，减少刷屏
             else:
                 self.health_fail_count += 1
                 self.log(f"健康检测失败 (连续 {self.health_fail_count} 次)")
@@ -345,6 +372,7 @@ class VpnManager:
                 self.log(f"连续 {self.health_fail_count} 次健康检测失败，准备切换节点")
                 self._switch_to_next_available()
                 self.health_fail_count = 0
+    # ---------------------------------------------------------------
 
     def background_check_nodes(self):
         while not self._stop_event.is_set():
