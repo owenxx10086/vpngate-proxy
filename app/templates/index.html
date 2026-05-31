@@ -46,6 +46,9 @@
                                     <button id="copy-socks-btn" class="btn btn-sm btn-outline-secondary ms-2" title="复制地址" disabled>复制地址</button>
                                 </p>
                                 <p>
+                                    <strong>已连接时长：</strong><span id="connected-duration">-</span>
+                                </p>
+                                <p>
                                     <button id="disconnect-btn" class="btn btn-danger btn-sm">断开连接</button>
                                     <button id="connect-btn" class="btn btn-success btn-sm">连接</button>
                                     <button id="reconnect-btn" class="btn btn-warning btn-sm">重新连接</button>
@@ -270,6 +273,18 @@
                 document.getElementById("node-location").textContent = data.node_info?.country_long || "-";
                 const socksLink = data.socks || "-";
                 document.getElementById("socks-link").textContent = socksLink;
+                const connectedSince = data.connected_since;
+                const durationSpan = document.getElementById("connected-duration");
+                if (connectedSince) {
+                    const start = new Date(connectedSince);
+                    const diff = Math.floor((new Date() - start) / 1000);
+                    const h = Math.floor(diff / 3600);
+                    const m = Math.floor((diff % 3600) / 60);
+                    const s = diff % 60;
+                    durationSpan.textContent = `${h}时${m}分${s}秒`;
+                } else {
+                    durationSpan.textContent = "-";
+                }
                 const copyBtn = document.getElementById("copy-socks-btn");
                 copyBtn.disabled = !(data.connected && socksLink !== "-");
                 const ipInfo = document.getElementById("ip-info");
