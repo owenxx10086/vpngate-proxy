@@ -306,6 +306,7 @@ class VpnManager:
 
         # 记录连接开始时间
         self.status["connected_since"] = datetime.now(timezone.utc).isoformat()
+        self.log(f"已记录连接开始时间: {self.status['connected_since']}")
         self._failed_ips.clear()
         return True
 
@@ -315,13 +316,12 @@ class VpnManager:
             try:
                 start = datetime.fromisoformat(self.status["connected_since"])
                 duration = datetime.now() - start
-                # 只保留到秒，去除微秒
-                duration_str = str(duration).split('.')[0]
+                duration_str = str(duration).split('.')[0]   # 只保留到秒
                 hostname = self.status["node_info"].get("hostname", "")
                 ip = self.status["node_info"].get("ip", "")
                 self.log(f"节点 {hostname} ({ip}) 已断开，使用时长: {duration_str}")
-            except Exception:
-                pass
+            except Exception as e:
+                self.log(f"记录使用时长异常: {e}")
         self.status["connected_since"] = None
 
         if self.tun_ip and self.tun_dev:
