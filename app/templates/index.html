@@ -194,6 +194,24 @@
             document.getElementById("confirmNo").onclick = () => { globalModal.hide(); callback(false); };
         }
 
+        // ========== 新增：加载历史日志 ==========
+        async function loadHistoricalLogs() {
+            try {
+                const res = await fetch("/api/logs");
+                if (!res.ok) return;
+                const logs = await res.json();
+                // 清空当前面板，填充历史日志
+                logPanel.innerHTML = "";
+                logs.forEach(line => {
+                    logPanel.innerHTML += `<div>${line}</div>`;
+                });
+                logPanel.scrollTop = logPanel.scrollHeight;
+            } catch(e) {
+                console.error("加载历史日志失败:", e);
+            }
+        }
+        // =========================================
+
         socket.on("log", (data) => {
             const msg = `<div>${data.message}</div>`;
             logPanel.innerHTML += msg;
@@ -649,6 +667,7 @@
         // ---------- 监听标签页切换：当切换到节点列表时自动刷新 ----------
         document.addEventListener("DOMContentLoaded", () => {
             loadSettings();
+            loadHistoricalLogs();           // <-- 新增：加载历史日志
             updateAllNodesCache().then(() => refreshNodes());
             loadSystemInfo();
 
