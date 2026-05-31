@@ -16,7 +16,8 @@ DEFAULT_CONFIG = {
     "check_limit": 20,
     "secret_key": "",
     "auto_update_interval": 0,
-    "health_fail_threshold": 3
+    "health_fail_threshold": 3,
+    "health_check_interval": 10
 }
 
 def load_config():
