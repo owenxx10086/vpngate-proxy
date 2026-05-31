@@ -9,12 +9,11 @@ import threading
 import time
 import logging
 from datetime import datetime
-
 import requests
 from bs4 import BeautifulSoup
-
 import config
 from socks_server import Socks5Server
+from datetime import datetime, timezone
 
 logger = logging.getLogger("vpn_manager")
 
@@ -307,7 +306,7 @@ class VpnManager:
         self.log(f"SOCKS5 代理已启动: {self.status['socks']}")
 
         # 记录连接开始时间
-        self.status["connected_since"] = datetime.now().isoformat()
+        self.status["connected_since"] = datetime.now(timezone.utc).isoformat()
         self._failed_ips.clear()
         return True
 
