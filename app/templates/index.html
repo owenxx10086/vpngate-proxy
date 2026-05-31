@@ -110,6 +110,11 @@
                         <input type="number" class="form-control" id="cfg-health-fail-threshold" min="1" max="10" value="3">
                         <small class="text-muted">连续失败多少次后自动切换节点（建议 2~5）</small>
                     </div>
+                    <div class="mb-3">
+                        <label>健康检测间隔 (秒)</label>
+                        <input type="number" class="form-control" id="cfg-health-check-interval" min="5" max="300" value="10">
+                        <small class="text-muted">每次健康检测的间隔时间，建议 10~30 秒</small>
+                    </div>
                     <button type="submit" class="btn btn-success">保存</button>
                     <button type="button" id="restart-btn" class="btn btn-danger ms-2">保存并重启服务</button>
                     <span id="settings-msg" class="ms-3"></span>
@@ -555,6 +560,7 @@
                     check_limit: parseInt(document.getElementById("cfg-check-limit").value),
                     auto_update_interval: parseInt(document.getElementById("cfg-auto-update-interval").value) || 0,
                     health_fail_threshold: parseInt(document.getElementById("cfg-health-fail-threshold").value) || 3,
+                    health_check_interval: parseInt(document.getElementById("cfg-health-check-interval").value) || 10,
                 };
                 try {
                     const saveRes = await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(newCfg) });
@@ -582,6 +588,7 @@
                 document.getElementById("cfg-check-limit").value = cfg.check_limit || 20;
                 document.getElementById("cfg-auto-update-interval").value = cfg.auto_update_interval || 0;
                 document.getElementById("cfg-health-fail-threshold").value = cfg.health_fail_threshold || 3;
+                document.getElementById("cfg-health-check-interval").value = cfg.health_check_interval || 10;
                 configRegion = cfg.region || "all";
                 if (allNodesCache.length > 0) updateSettingsRegionDropdown();
                 else updateCurrentRegionText();
@@ -603,6 +610,7 @@
                 check_limit: parseInt(document.getElementById("cfg-check-limit").value),
                 auto_update_interval: parseInt(document.getElementById("cfg-auto-update-interval").value) || 0,
                 health_fail_threshold: parseInt(document.getElementById("cfg-health-fail-threshold").value) || 3,
+                health_check_interval: parseInt(document.getElementById("cfg-health-check-interval").value) || 10,
             };
             const msg = document.getElementById("settings-msg");
             try {
