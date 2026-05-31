@@ -39,12 +39,13 @@ class VpnManager:
         self._log_callback = None
         self.tun_dev = None
         self.tun_ip = None
-        self.vpn_gateway = None          # 保存 VPN 网关 IP，用于策略路由和健康检测
+        self.vpn_gateway = None          # VPN 网关 IP
         self.health_fail_count = 0
         self.max_health_fails = self.config.get("health_fail_threshold", 3)
+        self.health_check_interval = self.config.get("health_check_interval", 10)  # 检测间隔（秒）
         self._available_nodes = []
         self.policy_routing_set = False
-        self._failed_ips = set()   # 记录本轮切换中尝试失败的 IP
+        self._failed_ips = set()
 
     def set_log_callback(self, cb):
         self._log_callback = cb
@@ -58,6 +59,7 @@ class VpnManager:
         self.config = cfg
         config.save_config(cfg)
         self.max_health_fails = self.config.get("health_fail_threshold", 3)
+        self.health_check_interval = self.config.get("health_check_interval", 10)
         self._auto_update_trigger.set()
 
     def fetch_nodes(self):
@@ -155,7 +157,6 @@ class VpnManager:
         return None, None
 
     def _setup_policy_routing(self, ip, dev):
-        """配置策略路由，如果知道网关则使用 via 以确保数据包正确转发"""
         try:
             subprocess.run(["ip", "rule", "add", "from", ip, "table", "100"], check=False)
             if self.vpn_gateway:
@@ -179,7 +180,6 @@ class VpnManager:
             return
         try:
             subprocess.run(["ip", "rule", "del", "from", ip, "table", "100"], check=False)
-            # 根据当时配置的格式删除路由
             if self.vpn_gateway:
                 subprocess.run(
                     ["ip", "route", "del", "default", "via", self.vpn_gateway, "dev", dev, "table", "100"],
@@ -232,7 +232,7 @@ class VpnManager:
 
         tun_ip = None
         tun_dev = None
-        vpn_gateway = None   # 从推送信息提取的网关
+        vpn_gateway = None
         connected_flag = False
         start_time = time.time()
         timeout = 25
@@ -253,7 +253,6 @@ class VpnManager:
             if "Peer Connection Initiated" in line:
                 self.log("TLS 握手成功，等待配置...")
 
-            # 提取网关 IP（ifconfig 的第二个地址）
             if "PUSH: Received control message: 'PUSH_REPLY" in line:
                 match = re.search(r"ifconfig (\d+\.\d+\.\d+\.\d+) (\d+\.\d+\.\d+\.\d+)", line)
                 if match:
@@ -288,7 +287,7 @@ class VpnManager:
 
         self.tun_dev = tun_dev
         self.tun_ip = tun_ip
-        self.vpn_gateway = vpn_gateway      # 保存网关
+        self.vpn_gateway = vpn_gateway
         self.health_fail_count = 0
 
         self._setup_policy_routing(tun_ip, tun_dev)
@@ -305,8 +304,6 @@ class VpnManager:
         self.status["socks"] = f"socks5://{self._get_host_ip()}:{socks_port}"
         self.status["ip_info"] = self.detect_ip(node["ip"])
         self.log(f"SOCKS5 代理已启动: {self.status['socks']}")
-
-        # 连接成功，清空失败记录
         self._failed_ips.clear()
         return True
 
@@ -330,7 +327,7 @@ class VpnManager:
             self.socks_server = None
         self.tun_dev = None
         self.tun_ip = None
-        self.vpn_gateway = None   # 清空网关
+        self.vpn_gateway = None
         self.status["connected"] = False
         self.status["node_info"] = {}
         self.status["socks"] = ""
@@ -348,11 +345,8 @@ class VpnManager:
             return "127.0.0.1"
 
     def _is_tunnel_alive(self):
-        """使用 SOCKS5 代理访问 httpbin.org，只要请求成功就认为隧道可用"""
-        # 首先检查进程是否存活
         if not self.vpn_process or self.vpn_process.poll() is not None:
             return False
-        # 然后检查接口是否存在
         if not self.tun_dev or not self.tun_ip:
             return False
         try:
@@ -365,7 +359,6 @@ class VpnManager:
         except Exception:
             return False
 
-        # 通过 SOCKS5 代理请求测试站点，只验证连通性，不再比对 IP
         try:
             socks_port = self.config.get("socks_port", 1080)
             result = subprocess.run(
@@ -385,7 +378,7 @@ class VpnManager:
 
     def health_check_loop(self):
         while not self._stop_event.is_set():
-            time.sleep(10)
+            time.sleep(self.health_check_interval)          # 使用配置的间隔
             if not self.status["connected"]:
                 self.health_fail_count = 0
                 continue
