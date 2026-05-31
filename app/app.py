@@ -6,6 +6,7 @@ import time
 import threading
 import logging
 import secrets
+from logging.handlers import TimedRotatingFileHandler
 
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for
 from flask_socketio import SocketIO, emit
@@ -13,11 +14,36 @@ from flask_socketio import SocketIO, emit
 from config import load_config, save_config
 from vpn_manager import VpnManager
 
+# ---------- 日志持久化配置 ----------
+LOG_DIR = "/data/logs"
+os.makedirs(LOG_DIR, exist_ok=True)
+LOG_FILE = os.path.join(LOG_DIR, "vpn-proxy.log")
+
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+
+# 每天午夜轮转一次，保留 3 个文件（3 天）
+file_handler = TimedRotatingFileHandler(
+    LOG_FILE,
+    when="midnight",
+    interval=1,
+    backupCount=3,
+    encoding="utf-8"
+)
+file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+root_logger.addHandler(file_handler)
+
+# 控制台输出（便于 docker logs 查看）
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+root_logger.addHandler(console_handler)
+# ---------------------------------------
+
 app = Flask(__name__)
 app.config['SESSION_COOKIE_NAME'] = 'vpngate_proxy_session'
 
 cfg = load_config()
-app.secret_key = cfg.get("secret_key") or secrets.token_hex(24)   # 保证为字符串且非空
+app.secret_key = cfg.get("secret_key") or secrets.token_hex(24)
 
 socketio = SocketIO(app, async_mode="eventlet")
 
@@ -164,6 +190,23 @@ def system_info():
     except Exception:
         info["curl"] = "未知"
     return jsonify(info)
+
+# ---------- 新增：历史日志接口 ----------
+@app.route("/api/logs")
+@login_required
+def get_logs():
+    """返回最近的日志内容（最多 1000 行）"""
+    try:
+        if not os.path.exists(LOG_FILE):
+            return jsonify([])
+        with open(LOG_FILE, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        # 取最后 1000 行，避免数据量过大
+        recent_lines = lines[-1000:]
+        return jsonify([line.strip() for line in recent_lines])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+# -----------------------------------------
 
 @socketio.on("connect")
 def handle_connect():
