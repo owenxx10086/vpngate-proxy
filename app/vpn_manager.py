@@ -315,7 +315,7 @@ class VpnManager:
         if self.status.get("connected_since") and self.status.get("node_info"):
             try:
                 start = datetime.fromisoformat(self.status["connected_since"])
-                duration = datetime.now() - start
+                duration = datetime.now(timezone.utc) - start
                 duration_str = str(duration).split('.')[0]   # 只保留到秒
                 hostname = self.status["node_info"].get("hostname", "")
                 ip = self.status["node_info"].get("ip", "")
