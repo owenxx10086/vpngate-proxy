@@ -40,7 +40,7 @@ class VpnManager:
         self.tun_dev = None
         self.tun_ip = None
         self.health_fail_count = 0
-        self.max_health_fails = 3
+        self.max_health_fails = self.config.get("health_fail_threshold", 3)
         self._available_nodes = []
         self.policy_routing_set = False
         self._failed_ips = set()   # 记录本轮切换中尝试失败的 IP
@@ -56,6 +56,7 @@ class VpnManager:
     def set_config(self, cfg):
         self.config = cfg
         config.save_config(cfg)
+        self.max_health_fails = self.config.get("health_fail_threshold", 3)
         self._auto_update_trigger.set()
 
     def fetch_nodes(self):
