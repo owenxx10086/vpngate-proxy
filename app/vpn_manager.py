@@ -360,7 +360,9 @@ class VpnManager:
         except Exception:
             return "127.0.0.1"
 
+    # 修改后的健康检测方法：使用多个稳定网站测试，任一成功即正常
     def _is_tunnel_alive(self):
+        """通过 SOCKS5 代理访问 Google/Bing 等稳定网站，只要任意一个成功就认为隧道可用"""
         if not self.vpn_process or self.vpn_process.poll() is not None:
             return False
         if not self.tun_dev or not self.tun_ip:
@@ -375,22 +377,30 @@ class VpnManager:
         except Exception:
             return False
 
-        try:
-            socks_port = self.config.get("socks_port", 1080)
-            result = subprocess.run(
-                ["curl", "-s", "--socks5", f"127.0.0.1:{socks_port}", "--max-time", "8",
-                 "http://httpbin.org/ip"],
-                capture_output=True, text=True, timeout=10
-            )
-            if result.returncode == 0:
-                data = json.loads(result.stdout)
-                if "origin" in data:
+        # 测试 URL 列表（可根据需要增删）
+        test_urls = [
+            "http://www.google.com",
+            "http://www.bing.com",
+            "http://httpbin.org/ip"
+        ]
+        socks_port = self.config.get("socks_port", 1080)
+
+        for url in test_urls:
+            try:
+                result = subprocess.run(
+                    ["curl", "-s", "--socks5", f"127.0.0.1:{socks_port}",
+                     "--max-time", "5", url],
+                    capture_output=True, text=True, timeout=8
+                )
+                # 只要 curl 返回成功且有输出，说明代理工作正常
+                if result.returncode == 0 and result.stdout.strip():
                     return True
-            self.log(f"curl 检测失败: {result.stderr.strip()}")
-            return False
-        except Exception as e:
-            self.log(f"SOCKS5 代理检测异常: {e}")
-            return False
+            except Exception:
+                continue
+
+        # 所有站点都失败，记录并返回 False
+        self.log("健康检测失败：无法通过代理访问任何测试网站")
+        return False
 
     def health_check_loop(self):
         while not self._stop_event.is_set():
