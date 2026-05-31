@@ -39,6 +39,7 @@ class VpnManager:
         self._log_callback = None
         self.tun_dev = None
         self.tun_ip = None
+        self.vpn_gateway = None          # 保存 VPN 网关 IP，用于策略路由和健康检测
         self.health_fail_count = 0
         self.max_health_fails = self.config.get("health_fail_threshold", 3)
         self._available_nodes = []
@@ -154,10 +155,21 @@ class VpnManager:
         return None, None
 
     def _setup_policy_routing(self, ip, dev):
+        """配置策略路由，如果知道网关则使用 via 以确保数据包正确转发"""
         try:
-            subprocess.run(["ip", "route", "add", "default", "dev", dev, "table", "100"], check=False)
             subprocess.run(["ip", "rule", "add", "from", ip, "table", "100"], check=False)
-            self.log(f"策略路由已配置: from {ip} lookup table 100 (default dev {dev})")
+            if self.vpn_gateway:
+                subprocess.run(
+                    ["ip", "route", "add", "default", "via", self.vpn_gateway, "dev", dev, "table", "100"],
+                    check=False
+                )
+                self.log(f"策略路由已配置: from {ip} table 100 (default via {self.vpn_gateway} dev {dev})")
+            else:
+                subprocess.run(
+                    ["ip", "route", "add", "default", "dev", dev, "table", "100"],
+                    check=False
+                )
+                self.log(f"策略路由已配置: from {ip} table 100 (default dev {dev})")
             self.policy_routing_set = True
         except Exception as e:
             self.log(f"配置策略路由失败: {e}")
@@ -167,7 +179,17 @@ class VpnManager:
             return
         try:
             subprocess.run(["ip", "rule", "del", "from", ip, "table", "100"], check=False)
-            subprocess.run(["ip", "route", "del", "default", "dev", dev, "table", "100"], check=False)
+            # 根据当时配置的格式删除路由
+            if self.vpn_gateway:
+                subprocess.run(
+                    ["ip", "route", "del", "default", "via", self.vpn_gateway, "dev", dev, "table", "100"],
+                    check=False
+                )
+            else:
+                subprocess.run(
+                    ["ip", "route", "del", "default", "dev", dev, "table", "100"],
+                    check=False
+                )
             self.log("策略路由已清理")
         except Exception as e:
             self.log(f"清理策略路由失败: {e}")
@@ -210,6 +232,7 @@ class VpnManager:
 
         tun_ip = None
         tun_dev = None
+        vpn_gateway = None   # 从推送信息提取的网关
         connected_flag = False
         start_time = time.time()
         timeout = 25
@@ -229,6 +252,13 @@ class VpnManager:
 
             if "Peer Connection Initiated" in line:
                 self.log("TLS 握手成功，等待配置...")
+
+            # 提取网关 IP（ifconfig 的第二个地址）
+            if "PUSH: Received control message: 'PUSH_REPLY" in line:
+                match = re.search(r"ifconfig (\d+\.\d+\.\d+\.\d+) (\d+\.\d+\.\d+\.\d+)", line)
+                if match:
+                    vpn_gateway = match.group(2)
+                    self.log(f"提取到 VPN 网关 IP: {vpn_gateway}")
 
             if "Initialization Sequence Completed" in line:
                 connected_flag = True
@@ -258,11 +288,12 @@ class VpnManager:
 
         self.tun_dev = tun_dev
         self.tun_ip = tun_ip
+        self.vpn_gateway = vpn_gateway      # 保存网关
         self.health_fail_count = 0
 
         self._setup_policy_routing(tun_ip, tun_dev)
 
-        self.log(f"VPN 连接成功，本机 VPN IP: {tun_ip}, 接口: {tun_dev}")
+        self.log(f"VPN 连接成功，本机 VPN IP: {tun_ip}, 接口: {tun_dev}, 网关: {vpn_gateway}")
 
         socks_bind = "0.0.0.0"
         socks_port = self.config["socks_port"]
@@ -299,6 +330,7 @@ class VpnManager:
             self.socks_server = None
         self.tun_dev = None
         self.tun_ip = None
+        self.vpn_gateway = None   # 清空网关
         self.status["connected"] = False
         self.status["node_info"] = {}
         self.status["socks"] = ""
@@ -315,7 +347,6 @@ class VpnManager:
         except Exception:
             return "127.0.0.1"
 
-    # ---------- 修改了 _is_tunnel_alive 和 health_check_loop ----------
     def _is_tunnel_alive(self):
         """使用 SOCKS5 代理访问 httpbin.org，只要请求成功就认为隧道可用"""
         # 首先检查进程是否存活
@@ -345,7 +376,6 @@ class VpnManager:
             if result.returncode == 0:
                 data = json.loads(result.stdout)
                 if "origin" in data:
-                    # 成功获取到出口 IP，说明代理工作正常
                     return True
             self.log(f"curl 检测失败: {result.stderr.strip()}")
             return False
@@ -362,7 +392,6 @@ class VpnManager:
 
             if self._is_tunnel_alive():
                 self.health_fail_count = 0
-                # 成功时不记录日志，减少刷屏
             else:
                 self.health_fail_count += 1
                 self.log(f"健康检测失败 (连续 {self.health_fail_count} 次)")
@@ -371,7 +400,6 @@ class VpnManager:
                 self.log(f"连续 {self.health_fail_count} 次健康检测失败，准备切换节点")
                 self._switch_to_next_available()
                 self.health_fail_count = 0
-    # ---------------------------------------------------------------
 
     def background_check_nodes(self):
         while not self._stop_event.is_set():
@@ -420,12 +448,10 @@ class VpnManager:
             for node in nodes:
                 if self._stop_event.is_set():
                     break
-                # 跳过已尝试失败的节点
                 if node["ip"] in self._failed_ips:
                     continue
                 if self.status["connected"] and node["ip"] == self.status["node_info"].get("ip"):
                     continue
-                # 记录当前尝试的 IP
                 self._failed_ips.add(node["ip"])
                 self.log(f"尝试节点: {node['hostname']} ({node['ip']})")
                 if self.test_node(node):
