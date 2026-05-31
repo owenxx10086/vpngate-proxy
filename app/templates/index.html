@@ -105,6 +105,11 @@
                         <input type="number" class="form-control" id="cfg-auto-update-interval" min="0" max="1440" placeholder="0">
                         <small class="text-muted">设置后浏览器和后端会按此间隔自动刷新全量节点，0 表示关闭。</small>
                     </div>
+                    <div class="mb-3">
+                        <label>健康检测失败阈值</label>
+                        <input type="number" class="form-control" id="cfg-health-fail-threshold" min="1" max="10" value="3">
+                        <small class="text-muted">连续失败多少次后自动切换节点（建议 2~5）</small>
+                    </div>
                     <button type="submit" class="btn btn-success">保存</button>
                     <button type="button" id="restart-btn" class="btn btn-danger ms-2">保存并重启服务</button>
                     <span id="settings-msg" class="ms-3"></span>
@@ -548,7 +553,8 @@
                     region: document.getElementById("cfg-region").value,
                     node_limit: parseInt(document.getElementById("cfg-node-limit").value),
                     check_limit: parseInt(document.getElementById("cfg-check-limit").value),
-                    auto_update_interval: parseInt(document.getElementById("cfg-auto-update-interval").value) || 0
+                    auto_update_interval: parseInt(document.getElementById("cfg-auto-update-interval").value) || 0,
+                    health_fail_threshold: parseInt(document.getElementById("cfg-health-fail-threshold").value) || 3,
                 };
                 try {
                     const saveRes = await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(newCfg) });
@@ -575,6 +581,7 @@
                 document.getElementById("cfg-node-limit").value = cfg.node_limit || 200;
                 document.getElementById("cfg-check-limit").value = cfg.check_limit || 20;
                 document.getElementById("cfg-auto-update-interval").value = cfg.auto_update_interval || 0;
+                document.getElementById("cfg-health-fail-threshold").value = cfg.health_fail_threshold || 3;
                 configRegion = cfg.region || "all";
                 if (allNodesCache.length > 0) updateSettingsRegionDropdown();
                 else updateCurrentRegionText();
@@ -594,7 +601,8 @@
                 region: document.getElementById("cfg-region").value,
                 node_limit: parseInt(document.getElementById("cfg-node-limit").value),
                 check_limit: parseInt(document.getElementById("cfg-check-limit").value),
-                auto_update_interval: parseInt(document.getElementById("cfg-auto-update-interval").value) || 0
+                auto_update_interval: parseInt(document.getElementById("cfg-auto-update-interval").value) || 0,
+                health_fail_threshold: parseInt(document.getElementById("cfg-health-fail-threshold").value) || 3,
             };
             const msg = document.getElementById("settings-msg");
             try {
