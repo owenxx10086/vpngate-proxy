@@ -32,6 +32,8 @@
 
 十一、自定义日志保存天数
 
+十二、可以自定义节点列表自动跟新间隔
+
 # VPN Gate Proxy
 
 一个自动获取 [VPN Gate](https://www.vpngate.net/) 公共 VPN 节点、检测 IP 类型、自动连接并生成 SOCKS5 代理的 Docker 容器项目。提供 Web 面板进行可视化管理和实时监控。
