@@ -46,4 +46,6 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          no-cache: true      # ← 关键：禁用缓存，避免 unknown blob 错误
+          no-cache: true
+          build-args: |
+            IMAGE_VERSION=${{ github.sha }}
