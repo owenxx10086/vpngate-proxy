@@ -152,6 +152,11 @@
                         <small class="text-muted">每次健康检测的间隔时间，建议 10~30 秒，保存立即生效</small>
                     </div>
                     <div class="mb-3">
+                        <label>自定义健康检测地址</label>
+                        <textarea class="form-control" id="cfg-health-check-urls" rows="3" placeholder="多个地址用英文逗号或换行分隔，留空则使用默认（Google、Bing、httpbin）"></textarea>
+                        <small class="text-muted">例如：http://www.google.com, http://www.bing.com</small>
+                    </div>
+                    <div class="mb-3">
                         <label>日志保存天数</label>
                         <input type="number" class="form-control" id="cfg-log-retention-days" min="1" max="90" value="3">
                         <small class="text-muted">日志文件保留的天数，重启生效</small>
@@ -633,6 +638,7 @@
                     health_fail_threshold: parseInt(document.getElementById("cfg-health-fail-threshold").value) || 3,
                     health_check_interval: parseInt(document.getElementById("cfg-health-check-interval").value) || 10,
                     log_retention_days: parseInt(document.getElementById("cfg-log-retention-days").value) || 3,
+                    health_check_urls: document.getElementById("cfg-health-check-urls").value,
                 };
                 try {
                     const saveRes = await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(newCfg) });
@@ -662,6 +668,7 @@
                 document.getElementById("cfg-health-fail-threshold").value = cfg.health_fail_threshold || 3;
                 document.getElementById("cfg-health-check-interval").value = cfg.health_check_interval || 10;
                 document.getElementById("cfg-log-retention-days").value = cfg.log_retention_days || 3;
+                document.getElementById("cfg-health-check-urls").value = cfg.health_check_urls || "";
                 configRegion = cfg.region || "all";
                 if (allNodesCache.length > 0) updateSettingsRegionDropdown();
                 else updateCurrentRegionText();
@@ -685,6 +692,7 @@
                 health_fail_threshold: parseInt(document.getElementById("cfg-health-fail-threshold").value) || 3,
                 health_check_interval: parseInt(document.getElementById("cfg-health-check-interval").value) || 10,
                 log_retention_days: parseInt(document.getElementById("cfg-log-retention-days").value) || 3,
+                health_check_urls: document.getElementById("cfg-health-check-urls").value,
             };
             const msg = document.getElementById("settings-msg");
             try {
