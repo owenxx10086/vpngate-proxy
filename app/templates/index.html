@@ -85,40 +85,73 @@
             <!-- 设置 -->
             <div class="tab-pane fade" id="settings">
                 <form id="settings-form">
-                    <div class="mb-3"><label>面板密码</label><input type="password" class="form-control" id="cfg-password"></div>
-                    <div class="mb-3"><label>API 地址</label><input class="form-control" id="cfg-api-url"></div>
-                    <div class="mb-3"><label>SOCKS 端口</label><input type="number" class="form-control" id="cfg-socks-port"></div>
-                    <div class="mb-3"><label>面板端口 (重启生效)</label><input type="number" class="form-control" id="cfg-web-port"></div>
-                    <div class="mb-3"><label>VPN 用户名</label><input class="form-control" id="cfg-vpn-user"></div>
-                    <div class="mb-3"><label>VPN 密码</label><input type="password" class="form-control" id="cfg-vpn-pass"></div>
+                    <div class="mb-3">
+                        <label>面板密码</label>
+                        <input type="password" class="form-control" id="cfg-password">
+                        <small class="text-muted">面板登录密码，保存立即生效</small>
+                    </div>
+                    <div class="mb-3">
+                        <label>API 地址</label>
+                        <input class="form-control" id="cfg-api-url">
+                        <small class="text-muted">获取节点的API地址，保存立即生效</small>
+                    </div>
+                    <div class="mb-3">
+                        <label>SOCKS 端口</label>
+                        <input type="number" class="form-control" id="cfg-socks-port">
+                        <small class="text-muted">SOCKS代理的端口，重启生效</small>
+                    </div>
+                    <div class="mb-3">
+                        <label>面板端口</label>
+                        <input type="number" class="form-control" id="cfg-web-port">
+                        <small class="text-muted">面板端口，重启生效</small>
+                    </div>
+                    <div class="mb-3">
+                        <label>VPN 用户名</label>
+                        <input class="form-control" id="cfg-vpn-user">
+                        <small class="text-muted">连接节点的用户名，保存立即生效</small>
+                    </div>
+                    <div class="mb-3">
+                        <label>VPN 密码</label>
+                        <input type="password" class="form-control" id="cfg-vpn-pass">
+                        <small class="text-muted">连接节点的密码，保存立即生效</small>
+                    </div>
                     <div class="mb-3">
                         <label>默认连接地区</label>
                         <select id="cfg-region" class="form-select">
                             <option value="all">所有地区</option>
                         </select>
                         <span id="cfg-region-current" class="text-muted ms-2 small"></span>
+                        <small class="text-muted">连接节点默认地区，保存立即生效，需要重新连接</small>
                     </div>
-                    <div class="mb-3"><label>节点数据上限</label><input type="number" class="form-control" id="cfg-node-limit" min="1" max="1000"></div>
-                    <div class="mb-3"><label>检测数量上限</label><input type="number" class="form-control" id="cfg-check-limit" min="1" max="500"></div>
+                    <div class="mb-3">
+                        <label>节点数据上限</label>
+                        <input type="number" class="form-control" id="cfg-node-limit" min="1" max="1000">
+                        <small class="text-muted">从API获取的节点数量上限，保存立即生效</small>
+                    </div>
+                    <div class="mb-3">
+                        <label>检测数量上限</label>
+                        <input type="number" class="form-control" id="cfg-check-limit" min="1" max="500">
+                        <small class="text-muted">预连接节点检测数量上限，保存立即生效</small>
+                    </div>
                     <div class="mb-3">
                         <label>自动更新节点间隔 (分钟)</label>
                         <input type="number" class="form-control" id="cfg-auto-update-interval" min="0" max="1440" placeholder="0">
-                        <small class="text-muted">设置后浏览器和后端会按此间隔自动刷新全量节点，0 表示关闭。</small>
+                        <small class="text-muted">设置后浏览器和后端会按此间隔自动刷新全量节点，0 表示关闭，保存立即生效。</small>
                     </div>
                     <div class="mb-3">
                         <label>健康检测失败阈值</label>
                         <input type="number" class="form-control" id="cfg-health-fail-threshold" min="1" max="10" value="3">
-                        <small class="text-muted">连续失败多少次后自动切换节点（建议 2~5）</small>
+                        <small class="text-muted">连续失败多少次后自动切换节点（建议 2~5），保存立即生效</small>
                     </div>
                     <div class="mb-3">
                         <label>健康检测间隔 (秒)</label>
                         <input type="number" class="form-control" id="cfg-health-check-interval" min="5" max="300" value="10">
-                        <small class="text-muted">每次健康检测的间隔时间，建议 10~30 秒</small>
+                        <small class="text-muted">每次健康检测的间隔时间，建议 10~30 秒，保存立即生效</small>
                     </div>
                     <div class="mb-3">
                         <label>日志保存天数</label>
                         <input type="number" class="form-control" id="cfg-log-retention-days" min="1" max="90" value="3">
-                        <small class="text-muted">日志文件保留的天数，修改后需重启服务生效</small>
+                        <small class="text-muted">日志文件保留的天数，重启生效</small>
                     </div>
                     <button type="submit" class="btn btn-success">保存</button>
                     <button type="button" id="restart-btn" class="btn btn-danger ms-2">保存并重启服务</button>
