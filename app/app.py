@@ -22,12 +22,12 @@ LOG_FILE = os.path.join(LOG_DIR, "vpn-proxy.log")
 root_logger = logging.getLogger()
 root_logger.setLevel(logging.INFO)
 
-# 每天午夜轮转一次，保留 3 个文件（3 天）
+cfg = load_config()
 file_handler = TimedRotatingFileHandler(
     LOG_FILE,
     when="midnight",
     interval=1,
-    backupCount=3,
+    backupCount=cfg.get("log_retention_days", 3),
     encoding="utf-8"
 )
 file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
