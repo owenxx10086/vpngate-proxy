@@ -17,7 +17,8 @@ DEFAULT_CONFIG = {
     "secret_key": "",
     "auto_update_interval": 0,
     "health_fail_threshold": 3,
-    "health_check_interval": 10
+    "health_check_interval": 10,
+    "log_retention_days": 3
 }
 
 def load_config():
