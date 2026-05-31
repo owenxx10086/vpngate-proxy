@@ -362,7 +362,8 @@ class VpnManager:
 
     # 修改后的健康检测方法：使用多个稳定网站测试，任一成功即正常
     def _is_tunnel_alive(self):
-        """通过 SOCKS5 代理访问 Google/Bing 等稳定网站，只要任意一个成功就认为隧道可用"""
+        """通过 SOCKS5 代理访问自定义或默认的测试网站，任一成功即健康，输出详细日志"""
+        # 1. 检查进程和接口
         if not self.vpn_process or self.vpn_process.poll() is not None:
             return False
         if not self.tun_dev or not self.tun_ip:
@@ -377,29 +378,43 @@ class VpnManager:
         except Exception:
             return False
 
-        # 测试 URL 列表（可根据需要增删）
-        test_urls = [
-            "http://www.google.com",
-            "http://www.bing.com",
-            "http://httpbin.org/ip"
-        ]
+        # 2. 获取检测地址列表
+        raw_urls = self.config.get("health_check_urls", "")
+        if raw_urls.strip():
+            # 按逗号或换行分割，过滤空字符串和纯空白
+            import re
+            urls = [u.strip() for u in re.split(r'[,\n]', raw_urls) if u.strip()]
+            # 确保每个 URL 有 http:// 前缀（如果未指定）
+            urls = [u if u.startswith('http://') or u.startswith('https://') else f'http://{u}' for u in urls]
+        else:
+            # 默认测试地址
+            urls = [
+                "http://www.google.com",
+                "http://www.bing.com",
+                "http://httpbin.org/ip"
+            ]
+
         socks_port = self.config.get("socks_port", 1080)
 
-        for url in test_urls:
+        # 3. 逐个尝试，任一成功即返回 True
+        for url in urls:
             try:
                 result = subprocess.run(
                     ["curl", "-s", "--socks5", f"127.0.0.1:{socks_port}",
                      "--max-time", "5", url],
                     capture_output=True, text=True, timeout=8
                 )
-                # 只要 curl 返回成功且有输出，说明代理工作正常
                 if result.returncode == 0 and result.stdout.strip():
+                    self.log(f"健康检测成功: {url} 访问正常")
                     return True
-            except Exception:
-                continue
+                else:
+                    # 记录失败原因（不中断，继续尝试下一个）
+                    self.log(f"健康检测尝试 {url} 失败: {result.stderr.strip() or '无返回数据'}")
+            except Exception as e:
+                self.log(f"健康检测尝试 {url} 异常: {e}")
 
-        # 所有站点都失败，记录并返回 False
-        self.log("健康检测失败：无法通过代理访问任何测试网站")
+        # 全部失败
+        self.log("健康检测失败: 所有测试地址均无法访问")
         return False
 
     def health_check_loop(self):
