@@ -189,6 +189,13 @@ def system_info():
         info["curl"] = ver.splitlines()[0].strip()
     except Exception:
         info["curl"] = "未知"
+    # 读取镜像版本
+    try:
+        with open("/app/version.txt", "r") as f:
+            version = f.read().strip()
+        info["镜像版本"] = version
+    except Exception:
+        info["镜像版本"] = "未知"
     return jsonify(info)
 
 # ---------- 新增：历史日志接口 ----------
