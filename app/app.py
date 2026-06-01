@@ -1,18 +1,16 @@
 import eventlet
 eventlet.monkey_patch()
-
 import os
 import time
 import threading
 import logging
 import secrets
 from logging.handlers import TimedRotatingFileHandler
-
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for
 from flask_socketio import SocketIO, emit
-
 from config import load_config, save_config
 from vpn_manager import VpnManager
+import subprocess
 
 # ---------- 日志持久化配置 ----------
 LOG_DIR = "/data/logs"
@@ -167,7 +165,6 @@ def auto_connect():
 @app.route("/api/system")
 @login_required
 def system_info():
-    import subprocess
     info = {}
     try:
         ver = subprocess.check_output(["openvpn", "--version"], stderr=subprocess.STDOUT, text=True)
@@ -222,18 +219,15 @@ def latency():
 @app.route("/api/speedtest")
 @login_required
 def speedtest():
-    import subprocess
-    import time
-
-    target = load_config().get("speedtest_url", "http://speed.cloudflare.com/__down?bytes=1048576")
+    target = load_config().get("speedtest_url", "http://cachefly.cachefly.net/1mb.test")
     socks_port = manager.config.get("socks_port", 1080)
 
     try:
         start = time.time()
         result = subprocess.run(
             ["curl", "-s", "--socks5", f"127.0.0.1:{socks_port}",
-             "--max-time", "15", "-o", "/dev/null", "-w", "%{size_download}", target],
-            capture_output=True, text=True, timeout=20
+             "--max-time", "60", "-o", "/dev/null", "-w", "%{size_download}", target],
+            capture_output=True, text=True, timeout=70
         )
         elapsed = time.time() - start
 
