@@ -219,35 +219,49 @@ def latency():
 @app.route("/api/speedtest")
 @login_required
 def speedtest():
-    target = load_config().get("speedtest_url", "http://cachefly.cachefly.net/1mb.test")
+    import subprocess
+    import time
+
+    target = load_config().get("speedtest_url", "http://speed.cloudflare.com/__down?bytes=1048576")
     socks_port = manager.config.get("socks_port", 1080)
+    max_retries = int(load_config().get("speedtest_retry", 3))
 
-    try:
-        start = time.time()
-        result = subprocess.run(
-            ["curl", "-s", "--socks5", f"127.0.0.1:{socks_port}",
-             "--max-time", "60", "-o", "/dev/null", "-w", "%{size_download}", target],
-            capture_output=True, text=True, timeout=70
-        )
-        elapsed = time.time() - start
+    for attempt in range(1, max_retries + 1):
+        try:
+            start = time.time()
+            result = subprocess.run(
+                ["curl", "-s", "--socks5", f"127.0.0.1:{socks_port}",
+                 "--max-time", "60", "-o", "/dev/null", "-w", "%{size_download}", target],
+                capture_output=True, text=True, timeout=70
+            )
+            elapsed = time.time() - start
 
-        if result.returncode != 0:
+            if result.returncode == 0:
+                size_bytes = int(result.stdout.strip())
+                speed_mbps = round((size_bytes * 8) / (elapsed * 1_000_000), 2)
+                return jsonify({
+                    "speed_mbps": speed_mbps,
+                    "elapsed_sec": round(elapsed, 2),
+                    "size_bytes": size_bytes
+                })
+
+            # 失败则记录日志，继续重试（最后一次重试才返回错误）
             error_msg = result.stderr.strip() or f"curl 退出码: {result.returncode}"
-            # 同时记录到日志
-            manager.log(f"测速失败: {error_msg}")
-            return jsonify({"speed_mbps": None, "error": error_msg})
+            manager.log(f"测速失败 (第{attempt}次，共{max_retries}次): {error_msg}")
 
-        size_bytes = int(result.stdout.strip())
-        speed_mbps = round((size_bytes * 8) / (elapsed * 1_000_000), 2)
+        except Exception as e:
+            error_msg = str(e)
+            manager.log(f"测速异常 (第{attempt}次，共{max_retries}次): {error_msg}")
 
-        return jsonify({
-            "speed_mbps": speed_mbps,
-            "elapsed_sec": round(elapsed, 2),
-            "size_bytes": size_bytes
-        })
-    except Exception as e:
-        manager.log(f"测速异常: {str(e)}")
-        return jsonify({"speed_mbps": None, "error": str(e)})
+        # 如果不是最后一次，等待 2 秒再重试
+        if attempt < max_retries:
+            time.sleep(2)
+
+    # 所有重试均失败
+    return jsonify({
+        "speed_mbps": None,
+        "error": f"经过 {max_retries} 次尝试仍失败"
+    })
 
 @socketio.on("connect")
 def handle_connect():
