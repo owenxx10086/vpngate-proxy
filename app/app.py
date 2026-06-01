@@ -219,6 +219,37 @@ def latency():
     ms = manager.measure_latency()
     return jsonify({"latency_ms": ms if ms > 0 else None})
 
+@app.route("/api/speedtest")
+@login_required
+def speedtest():
+    import subprocess
+    import time
+
+    target = load_config().get("speedtest_url", "http://httpbin.org/bytes/1048576")
+    socks_port = manager.config.get("socks_port", 1080)
+
+    try:
+        start = time.time()
+        result = subprocess.run(
+            ["curl", "-s", "--socks5", f"127.0.0.1:{socks_port}",
+             "--max-time", "15", "-o", "/dev/null", "-w", "%{size_download}", target],
+            capture_output=True, text=True, timeout=20
+        )
+        elapsed = time.time() - start
+        if result.returncode != 0:
+            return jsonify({"speed_mbps": None, "error": f"curl 请求失败: {result.stderr.strip() or '未知错误'}"})
+
+        size_bytes = int(result.stdout.strip())
+        speed_mbps = round((size_bytes * 8) / (elapsed * 1_000_000), 2)
+
+        return jsonify({
+            "speed_mbps": speed_mbps,
+            "elapsed_sec": round(elapsed, 2),
+            "size_bytes": size_bytes
+        })
+    except Exception as e:
+        return jsonify({"speed_mbps": None, "error": str(e)})
+
 @socketio.on("connect")
 def handle_connect():
     emit("log", {"message": "WebSocket 已连接"})
