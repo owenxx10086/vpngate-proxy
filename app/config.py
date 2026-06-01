@@ -21,7 +21,7 @@ DEFAULT_CONFIG = {
     "log_retention_days": 3,
     "health_check_urls": "",
     "latency_check_target": "",
-    "speedtest_url": "http://httpbin.org/bytes/1048576"
+    "speedtest_url": "http://cachefly.cachefly.net/1mb.test"
 }
 
 def load_config():
