@@ -466,7 +466,7 @@ class VpnManager:
                 if self.test_node(node):
                     available.append(node)
             self._available_nodes = available
-            self.log(f"当前可用节点: {len(available)} 个")
+            self.log(f"当前可用预备节点: {len(available)} 个")
 
     def _auto_update_loop(self):
         while not self._stop_event.is_set():
