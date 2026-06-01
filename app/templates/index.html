@@ -175,6 +175,10 @@
                         <small class="text-muted">用于测试下载速度的文件URL，默认链接为1MB大小，可通过修改"1mb.test"来改变大小，可以设置为：1mb.test、10mb.test、100mb.test，保存立即生效</small>
                     </div>
                     <div class="mb-3">
+                        <label>测速重试次数</label>
+                        <input type="number" class="form-control" id="cfg-speedtest-retry" min="0" max="10" value="3">
+                    </div>
+                    <div class="mb-3">
                         <label>日志保存天数</label>
                         <input type="number" class="form-control" id="cfg-log-retention-days" min="1" max="90" value="3">
                         <small class="text-muted">日志文件保留的天数，重启生效</small>
@@ -659,6 +663,7 @@
                     health_check_urls: document.getElementById("cfg-health-check-urls").value,
                     latency_check_target: document.getElementById("cfg-latency-check-target").value,
                     speedtest_url: document.getElementById("cfg-speedtest-url").value,
+                    speedtest_retry: parseInt(document.getElementById("cfg-speedtest-retry").value) || 3,
                 };
                 try {
                     const saveRes = await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(newCfg) });
@@ -691,6 +696,7 @@
                 document.getElementById("cfg-health-check-urls").value = cfg.health_check_urls || "";
                 document.getElementById("cfg-latency-check-target").value = cfg.latency_check_target || "";
                 document.getElementById("cfg-speedtest-url").value = cfg.speedtest_url || "http://cachefly.cachefly.net/1mb.test";
+                document.getElementById("cfg-speedtest-retry").value = cfg.speedtest_retry || 3;
                 configRegion = cfg.region || "all";
                 if (allNodesCache.length > 0) updateSettingsRegionDropdown();
                 else updateCurrentRegionText();
@@ -717,6 +723,7 @@
                 health_check_urls: document.getElementById("cfg-health-check-urls").value,
                 latency_check_target: document.getElementById("cfg-latency-check-target").value,
                 speedtest_url: document.getElementById("cfg-speedtest-url").value,
+                speedtest_retry: parseInt(document.getElementById("cfg-speedtest-retry").value) || 3,
             };
             const msg = document.getElementById("settings-msg");
             try {
