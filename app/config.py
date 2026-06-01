@@ -19,7 +19,8 @@ DEFAULT_CONFIG = {
     "health_fail_threshold": 3,
     "health_check_interval": 10,
     "log_retention_days": 3,
-    "health_check_urls": ""
+    "health_check_urls": "",
+    "latency_check_target": ""
 }
 
 def load_config():
