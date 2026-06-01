@@ -225,7 +225,7 @@ def speedtest():
     import subprocess
     import time
 
-    target = load_config().get("speedtest_url", "http://httpbin.org/bytes/1048576")
+    target = load_config().get("speedtest_url", "http://speed.cloudflare.com/__down?bytes=1048576")
     socks_port = manager.config.get("socks_port", 1080)
 
     try:
@@ -236,8 +236,12 @@ def speedtest():
             capture_output=True, text=True, timeout=20
         )
         elapsed = time.time() - start
+
         if result.returncode != 0:
-            return jsonify({"speed_mbps": None, "error": f"curl 请求失败: {result.stderr.strip() or '未知错误'}"})
+            error_msg = result.stderr.strip() or f"curl 退出码: {result.returncode}"
+            # 同时记录到日志
+            manager.log(f"测速失败: {error_msg}")
+            return jsonify({"speed_mbps": None, "error": error_msg})
 
         size_bytes = int(result.stdout.strip())
         speed_mbps = round((size_bytes * 8) / (elapsed * 1_000_000), 2)
@@ -248,6 +252,7 @@ def speedtest():
             "size_bytes": size_bytes
         })
     except Exception as e:
+        manager.log(f"测速异常: {str(e)}")
         return jsonify({"speed_mbps": None, "error": str(e)})
 
 @socketio.on("connect")
