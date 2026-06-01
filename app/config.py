@@ -20,7 +20,7 @@ DEFAULT_CONFIG = {
     "health_check_interval": 10,
     "log_retention_days": 3,
     "health_check_urls": "",
-    "latency_check_target": ""
+    "latency_check_target": "",
     "speedtest_url": "http://httpbin.org/bytes/1048576"
 }
 
