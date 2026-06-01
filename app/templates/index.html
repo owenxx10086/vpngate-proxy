@@ -172,7 +172,7 @@
                     <div class="mb-3">
                         <label>测速文件地址</label>
                         <input type="text" class="form-control" id="cfg-speedtest-url">
-                        <small class="text-muted">用于测试下载速度的文件URL，建议1~5MB</small>
+                        <small class="text-muted">用于测试下载速度的文件URL，默认链接为1MB大小，可通过修改"1mb.test"来改变大小，可以设置为：1mb.test、10mb.test、100mb.test，保存立即生效</small>
                     </div>
                     <div class="mb-3">
                         <label>日志保存天数</label>
@@ -690,7 +690,7 @@
                 document.getElementById("cfg-log-retention-days").value = cfg.log_retention_days || 3;
                 document.getElementById("cfg-health-check-urls").value = cfg.health_check_urls || "";
                 document.getElementById("cfg-latency-check-target").value = cfg.latency_check_target || "";
-                document.getElementById("cfg-speedtest-url").value = cfg.speedtest_url || "http://httpbin.org/bytes/1048576";
+                document.getElementById("cfg-speedtest-url").value = cfg.speedtest_url || "http://cachefly.cachefly.net/1mb.test";
                 configRegion = cfg.region || "all";
                 if (allNodesCache.length > 0) updateSettingsRegionDropdown();
                 else updateCurrentRegionText();
