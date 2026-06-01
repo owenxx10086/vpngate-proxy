@@ -129,6 +129,10 @@ services:
 
 ![3](https://github.com/xiaowen-king/vpngate-proxy/blob/main/images/3.png)
 
+![4](https://github.com/xiaowen-king/vpngate-proxy/blob/main/images/4.png)
+
+![5](https://github.com/xiaowen-king/vpngate-proxy/blob/main/images/5.png)
+
 ## 常见问题
 
 ### 一、使用vpngate的aip链接（https://www.vpngate.net/api/iphone/）获取不到节点信息怎么办？
