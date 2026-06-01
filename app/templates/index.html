@@ -49,9 +49,13 @@
                                     <strong>已连接时长：</strong><span id="connected-duration">-</span>
                                 </p>
                                 <p>
+                                    <strong>节点延迟：</strong><span id="latency-value">-</span> ms
+                                </p>
+                                <p>
                                     <button id="disconnect-btn" class="btn btn-danger btn-sm">断开连接</button>
                                     <button id="connect-btn" class="btn btn-success btn-sm">连接</button>
                                     <button id="reconnect-btn" class="btn btn-warning btn-sm">重新连接</button>
+                                    <button id="latency-btn" class="btn btn-info btn-sm ms-2">检测延迟</button>
                                 </p>
                             </div>
                         </div>
@@ -155,6 +159,11 @@
                         <label>自定义健康检测地址</label>
                         <textarea class="form-control" id="cfg-health-check-urls" rows="3" placeholder="多个地址用英文逗号或换行分隔，留空则使用默认（Google、Bing）"></textarea>
                         <small class="text-muted">例如：http://www.google.com, http://www.bing.com，默认使用http协议，可以使用https协议，保存立即生效</small>
+                    </div>
+                    <div class="mb-3">
+                        <label>延迟检测地址</label>
+                        <input type="text" class="form-control" id="cfg-latency-check-target" placeholder="留空则使用 VPN 网关 IP">
+                        <small class="text-muted">输入 IP 或域名，点击仪表盘"检测延迟"时会 ping 此地址</small>
                     </div>
                     <div class="mb-3">
                         <label>日志保存天数</label>
@@ -639,6 +648,7 @@
                     health_check_interval: parseInt(document.getElementById("cfg-health-check-interval").value) || 10,
                     log_retention_days: parseInt(document.getElementById("cfg-log-retention-days").value) || 3,
                     health_check_urls: document.getElementById("cfg-health-check-urls").value,
+                    latency_check_target: document.getElementById("cfg-latency-check-target").value,
                 };
                 try {
                     const saveRes = await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(newCfg) });
@@ -669,6 +679,7 @@
                 document.getElementById("cfg-health-check-interval").value = cfg.health_check_interval || 10;
                 document.getElementById("cfg-log-retention-days").value = cfg.log_retention_days || 3;
                 document.getElementById("cfg-health-check-urls").value = cfg.health_check_urls || "";
+                document.getElementById("cfg-latency-check-target").value = cfg.latency_check_target || "";
                 configRegion = cfg.region || "all";
                 if (allNodesCache.length > 0) updateSettingsRegionDropdown();
                 else updateCurrentRegionText();
@@ -693,6 +704,7 @@
                 health_check_interval: parseInt(document.getElementById("cfg-health-check-interval").value) || 10,
                 log_retention_days: parseInt(document.getElementById("cfg-log-retention-days").value) || 3,
                 health_check_urls: document.getElementById("cfg-health-check-urls").value,
+                latency_check_target: document.getElementById("cfg-latency-check-target").value,
             };
             const msg = document.getElementById("settings-msg");
             try {
@@ -728,6 +740,28 @@
             }
         }
 
+        document.getElementById("latency-btn").addEventListener("click", async () => {
+            const btn = document.getElementById("latency-btn");
+            btn.disabled = true;
+            btn.textContent = "检测中...";
+            try {
+                const res = await fetch("/api/latency");
+                const data = await res.json();
+                const val = data.latency_ms !== null ? data.latency_ms : "超时";
+                document.getElementById("latency-value").textContent = val;
+                if (val !== "超时") {
+                    showMessage("延迟检测", `当前延迟：${val} ms`, "info");
+                } else {
+                    showMessage("延迟检测", "请求超时，请稍后再试", "warning");
+                }
+            } catch(e) {
+                showMessage("检测失败", e.message, "danger");
+            } finally {
+                btn.disabled = false;
+                btn.textContent = "检测延迟";
+            }
+        });
+        
         // ---------- 监听标签页切换：当切换到节点列表时自动刷新 ----------
         document.addEventListener("DOMContentLoaded", () => {
             loadSettings();
