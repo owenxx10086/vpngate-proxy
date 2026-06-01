@@ -417,27 +417,27 @@ class VpnManager:
         return False
 
     def measure_latency(self):
-    """执行一次 ping 检测，返回延迟（毫秒），失败返回 -1"""
-    if not self.tun_dev or not self.tun_ip:
-        return -1
+        """执行一次 ping 检测，返回延迟（毫秒），失败返回 -1"""
+        if not self.tun_dev or not self.tun_ip:
+            return -1
 
-    # 优先使用用户配置的地址，否则用 VPN 网关 IP，最后回退 8.8.8.8
-    target = self.config.get("latency_check_target", "").strip()
-    if not target:
-        target = self.vpn_gateway if self.vpn_gateway else "8.8.8.8"
+        # 优先使用用户配置的地址，否则用 VPN 网关 IP，最后回退 8.8.8.8
+        target = self.config.get("latency_check_target", "").strip()
+        if not target:
+            target = self.vpn_gateway if self.vpn_gateway else "8.8.8.8"
 
-    try:
-        result = subprocess.run(
-            ["ping", "-c", "1", "-W", "2", "-I", self.tun_dev, target],
-            capture_output=True, text=True, timeout=5
-        )
-        if "time=" in result.stdout:
-            match = re.search(r"time=(\d+\.?\d*) ms", result.stdout)
-            if match:
-                return round(float(match.group(1)), 1)
-        return -1
-    except Exception:
-        return -1
+        try:
+            result = subprocess.run(
+                ["ping", "-c", "1", "-W", "2", "-I", self.tun_dev, target],
+                capture_output=True, text=True, timeout=5
+            )
+            if "time=" in result.stdout:
+                match = re.search(r"time=(\d+\.?\d*) ms", result.stdout)
+                if match:
+                    return round(float(match.group(1)), 1)
+            return -1
+        except Exception:
+            return -1
 
     def health_check_loop(self):
         while not self._stop_event.is_set():
