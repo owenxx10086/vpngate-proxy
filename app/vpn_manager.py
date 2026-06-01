@@ -360,9 +360,8 @@ class VpnManager:
         except Exception:
             return "127.0.0.1"
 
-    # 修改后的健康检测方法：使用多个稳定网站测试，任一成功即正常
     def _is_tunnel_alive(self):
-        """通过 SOCKS5 代理访问自定义或默认的测试网站，任一成功即健康，输出详细日志"""
+        """通过隧道 ping 自定义或默认的目标地址，任一成功即健康"""
         # 1. 检查进程和接口
         if not self.vpn_process or self.vpn_process.poll() is not None:
             return False
@@ -378,42 +377,35 @@ class VpnManager:
         except Exception:
             return False
 
-        # 2. 获取检测地址列表
-        raw_urls = self.config.get("health_check_urls", "")
-        if raw_urls.strip():
-            # 按逗号或换行分割，过滤空字符串和纯空白
+        # 2. 获取 ping 目标列表
+        raw_targets = self.config.get("health_check_urls", "")
+        if raw_targets.strip():
             import re
-            urls = [u.strip() for u in re.split(r'[,\n]', raw_urls) if u.strip()]
-            # 确保每个 URL 有 http:// 前缀（如果未指定）
-            urls = [u if u.startswith('http://') or u.startswith('https://') else f'http://{u}' for u in urls]
+            targets = [t.strip() for t in re.split(r'[,\n]', raw_targets) if t.strip()]
         else:
-            # 默认测试地址
-            urls = [
-                "http://www.google.com",
-                "http://www.bing.com",
-            ]
+            # 默认目标：优先 ping 网关，其次 8.8.8.8
+            targets = []
+            if self.vpn_gateway:
+                targets.append(self.vpn_gateway)
+            targets.append("8.8.8.8")
 
-        socks_port = self.config.get("socks_port", 1080)
-
-        # 3. 逐个尝试，任一成功即返回 True
-        for url in urls:
+        # 3. 逐个 ping，任一成功即返回 True
+        for target in targets:
             try:
                 result = subprocess.run(
-                    ["curl", "-s", "--socks5", f"127.0.0.1:{socks_port}",
-                     "--max-time", "5", url],
-                    capture_output=True, text=True, timeout=8
+                    ["ping", "-c", "1", "-W", "2", "-I", self.tun_dev, target],
+                    capture_output=True, text=True, timeout=5
                 )
-                if result.returncode == 0 and result.stdout.strip():
-                    self.log(f"健康检测成功: {url} 访问正常")
+                if "1 received" in result.stdout:
+                    self.log(f"健康检测成功: ping {target} 可达")
                     return True
                 else:
-                    # 记录失败原因（不中断，继续尝试下一个）
-                    self.log(f"健康检测尝试 {url} 失败: {result.stderr.strip() or '无返回数据'}")
+                    self.log(f"健康检测尝试 ping {target} 失败: 无响应或丢包")
             except Exception as e:
-                self.log(f"健康检测尝试 {url} 异常: {e}")
+                self.log(f"健康检测尝试 ping {target} 异常: {e}")
 
         # 全部失败
-        self.log("健康检测失败: 所有测试地址均无法访问")
+        self.log("健康检测失败: 所有目标均 ping 不通")
         return False
 
     def measure_latency(self):
