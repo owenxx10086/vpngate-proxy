@@ -198,7 +198,6 @@ def system_info():
         info["镜像SHA"] = "未知"
     return jsonify(info)
 
-# ---------- 新增：历史日志接口 ----------
 @app.route("/api/logs")
 @login_required
 def get_logs():
@@ -213,7 +212,12 @@ def get_logs():
         return jsonify([line.strip() for line in recent_lines])
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-# -----------------------------------------
+
+@app.route("/api/latency")
+@login_required
+def latency():
+    ms = manager.measure_latency()
+    return jsonify({"latency_ms": ms if ms > 0 else None})
 
 @socketio.on("connect")
 def handle_connect():
