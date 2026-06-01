@@ -255,7 +255,7 @@ def speedtest():
 
         # 如果不是最后一次，等待 2 秒再重试
         if attempt < max_retries:
-            time.sleep(2)
+            time.sleep(5)
 
     # 所有重试均失败
     return jsonify({
