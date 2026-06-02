@@ -149,18 +149,11 @@ def restart():
 @app.route("/api/auto_connect", methods=["POST"])
 @login_required
 def auto_connect():
-    try:
-        region = manager.config.get("region", "all")
-        nodes = manager.filter_nodes(region)
-        if not nodes:
-            return jsonify({"success": False, "error": "当前地区没有可用节点"})
-        success = manager.connect_node(nodes[0])
-        if success:
-            return jsonify({"success": True, "node": nodes[0]["hostname"]})
-        else:
-            return jsonify({"success": False, "error": "连接失败"})
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+    success, msg = manager.auto_connect_next()
+    if success:
+        return jsonify({"success": True, "node": msg})
+    else:
+        return jsonify({"success": False, "error": msg})
 
 @app.route("/api/system")
 @login_required
