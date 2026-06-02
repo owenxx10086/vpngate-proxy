@@ -135,6 +135,19 @@
                         <small class="text-muted">连接节点默认地区，保存立即生效，需要重新连接</small>
                     </div>
                     <div class="mb-3">
+                        <label>优先连接同IP段节点</label>
+                        <select id="cfg-prefer-same-subnet" class="form-select">
+                            <option value="false">关闭</option>
+                            <option value="true">开启</option>
+                        </select>
+                        <small class="text-muted">节点失效后优先连接同一子网的节点，保存立即生效</small>
+                    </div>
+                    <div class="mb-3">
+                        <label>子网前缀长度</label>
+                        <input type="number" class="form-control" id="cfg-subnet-prefix-length" min="8" max="32" value="24">
+                        <small class="text-muted">/24 表示前三段相同，/16 表示前两段相同，保存立即生效</small>
+                    </div>
+                    <div class="mb-3">
                         <label>节点数据上限</label>
                         <input type="number" class="form-control" id="cfg-node-limit" min="1" max="1000">
                         <small class="text-muted">从API获取的节点数量上限，保存立即生效</small>
@@ -665,6 +678,8 @@
                     latency_check_target: document.getElementById("cfg-latency-check-target").value,
                     speedtest_url: document.getElementById("cfg-speedtest-url").value,
                     speedtest_retry: parseInt(document.getElementById("cfg-speedtest-retry").value) || 3,
+                    prefer_same_subnet: document.getElementById("cfg-prefer-same-subnet").value === "true",
+                    subnet_prefix_length: parseInt(document.getElementById("cfg-subnet-prefix-length").value) || 24,
                 };
                 try {
                     const saveRes = await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(newCfg) });
@@ -698,6 +713,8 @@
                 document.getElementById("cfg-latency-check-target").value = cfg.latency_check_target || "";
                 document.getElementById("cfg-speedtest-url").value = cfg.speedtest_url || "http://cachefly.cachefly.net/1mb.test";
                 document.getElementById("cfg-speedtest-retry").value = cfg.speedtest_retry || 3;
+                document.getElementById("cfg-prefer-same-subnet").value = cfg.prefer_same_subnet === true ? "true" : "false";
+                document.getElementById("cfg-subnet-prefix-length").value = cfg.subnet_prefix_length || 24;
                 configRegion = cfg.region || "all";
                 if (allNodesCache.length > 0) updateSettingsRegionDropdown();
                 else updateCurrentRegionText();
@@ -725,6 +742,8 @@
                 latency_check_target: document.getElementById("cfg-latency-check-target").value,
                 speedtest_url: document.getElementById("cfg-speedtest-url").value,
                 speedtest_retry: parseInt(document.getElementById("cfg-speedtest-retry").value) || 3,
+                prefer_same_subnet: document.getElementById("cfg-prefer-same-subnet").value === "true",
+                subnet_prefix_length: parseInt(document.getElementById("cfg-subnet-prefix-length").value) || 24,
             };
             const msg = document.getElementById("settings-msg");
             try {
