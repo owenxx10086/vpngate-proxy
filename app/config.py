@@ -22,7 +22,9 @@ DEFAULT_CONFIG = {
     "health_check_urls": "",
     "latency_check_target": "",
     "speedtest_url": "http://cachefly.cachefly.net/1mb.test",
-    "speedtest_retry": 3
+    "speedtest_retry": 3,
+    "prefer_same_subnet": False,
+    "subnet_prefix_length": 24
 }
 
 def load_config():
