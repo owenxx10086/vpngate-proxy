@@ -562,6 +562,63 @@ class VpnManager:
                             return
                 self.log("所有节点均不可用，等待下次检测")
 
+    def auto_connect_next(self):
+        """自动连接下一个节点（跳过当前节点，支持同IP段优先）"""
+        region = self.config.get("region", "all")
+        nodes = self.filter_nodes(region)
+        if not nodes:
+            self.log("自动连接失败：当前地区没有可用节点")
+            return False, "当前地区没有可用节点"
+
+        # 获取上次连接的 IP（优先用 current_node，其次用 status 中的 node_info）
+        last_ip = None
+        if self.current_node and self.current_node.get("ip"):
+            last_ip = self.current_node["ip"]
+        elif self.status["node_info"].get("ip"):
+            last_ip = self.status["node_info"]["ip"]
+
+        prefer_same_subnet = self.config.get("prefer_same_subnet", False)
+        subnet_prefix = self.config.get("subnet_prefix_length", 24)
+
+        # 收集候选节点（排除 last_ip 和已失败 IP）
+        candidates = []
+        for node in nodes:
+            if node["ip"] == last_ip:
+                continue
+            if node["ip"] in self._failed_ips:
+                continue
+            candidates.append(node)
+
+        if not candidates:
+            self.log("自动连接失败：没有其他可用节点")
+            return False, "没有其他可用节点"
+
+        # 如果开启同子网优先，则将同子网节点排在前面
+        if prefer_same_subnet and last_ip:
+            subnet_nodes = []
+            other_nodes = []
+            last_sub = self._get_subnet(last_ip, subnet_prefix)
+            for node in candidates:
+                node_sub = self._get_subnet(node["ip"], subnet_prefix)
+                if node_sub and last_sub and node_sub == last_sub:
+                    subnet_nodes.append(node)
+                else:
+                    other_nodes.append(node)
+            candidates = subnet_nodes + other_nodes
+
+        # 依次尝试连接
+        for node in candidates:
+            if self._stop_event.is_set():
+                break
+            self._failed_ips.add(node["ip"])
+            self.log(f"自动连接尝试节点: {node['hostname']} ({node['ip']})")
+            if self.connect_node(node):
+                return True, node["hostname"]
+            self.log(f"节点 {node['hostname']} 连接失败")
+
+        self.log("自动连接失败：所有候选节点均连接失败")
+        return False, "所有候选节点均连接失败"
+
     def start(self):
         self._stop_event.clear()
         self._auto_update_trigger.clear()
