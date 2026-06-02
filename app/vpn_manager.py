@@ -291,7 +291,7 @@ class VpnManager:
         self.health_fail_count = 0
 
         self._setup_policy_routing(tun_ip, tun_dev)
-
+        time.sleep(1)
         self.log(f"VPN 连接成功，本机 VPN IP: {tun_ip}, 接口: {tun_dev}, 网关: {vpn_gateway}")
 
         socks_bind = "0.0.0.0"
