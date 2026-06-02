@@ -9,6 +9,7 @@ import threading
 import time
 import logging
 import requests
+import ipaddress
 from bs4 import BeautifulSoup
 import config
 from socks_server import Socks5Server
@@ -493,20 +494,73 @@ class VpnManager:
         else:
             self.log("没有预先检测的可用节点，尝试从当前列表中选择...")
             nodes = self.filter_nodes(self.config["region"])
-            for node in nodes:
-                if self._stop_event.is_set():
-                    break
-                if node["ip"] in self._failed_ips:
-                    continue
-                if self.status["connected"] and node["ip"] == self.status["node_info"].get("ip"):
-                    continue
-                self._failed_ips.add(node["ip"])
-                self.log(f"尝试节点: {node['hostname']} ({node['ip']})")
-                if self.test_node(node):
-                    success = self.connect_node(node)
-                    if success:
-                        return
-            self.log("所有节点均不可用，等待下次检测")
+
+            # 检查是否开启同IP段优先
+            prefer_same_subnet = self.config.get("prefer_same_subnet", False)
+            subnet_prefix = self.config.get("subnet_prefix_length", 24)
+            last_ip = None
+            if self.current_node and self.current_node.get("ip"):
+                last_ip = self.current_node["ip"]
+            elif self.status["node_info"].get("ip"):
+                last_ip = self.status["node_info"]["ip"]
+
+            if prefer_same_subnet and last_ip:
+                subnet_nodes = []
+                other_nodes = []
+                for node in nodes:
+                    if node["ip"] == last_ip:
+                        continue
+                    try:
+                        node_sub = self._get_subnet(node["ip"], subnet_prefix)
+                        last_sub = self._get_subnet(last_ip, subnet_prefix)
+                        if node_sub and last_sub and node_sub == last_sub:
+                            subnet_nodes.append(node)
+                        else:
+                            other_nodes.append(node)
+                    except Exception:
+                        other_nodes.append(node)
+
+                # 优先尝试同子网节点
+                for node in subnet_nodes:
+                    if self._stop_event.is_set():
+                        break
+                    if node["ip"] in self._failed_ips:
+                        continue
+                    self._failed_ips.add(node["ip"])
+                    self.log(f"优先同IP段尝试节点: {node['hostname']} ({node['ip']})")
+                    if self.test_node(node):
+                        success = self.connect_node(node)
+                        if success:
+                            return
+                # 再尝试其他节点
+                for node in other_nodes:
+                    if self._stop_event.is_set():
+                        break
+                    if node["ip"] in self._failed_ips:
+                        continue
+                    self._failed_ips.add(node["ip"])
+                    self.log(f"尝试节点: {node['hostname']} ({node['ip']})")
+                    if self.test_node(node):
+                        success = self.connect_node(node)
+                        if success:
+                            return
+                self.log("所有节点均不可用，等待下次检测")
+            else:
+                # 未开启优先，使用原有顺序逻辑
+                for node in nodes:
+                    if self._stop_event.is_set():
+                        break
+                    if node["ip"] in self._failed_ips:
+                        continue
+                    if self.status["connected"] and node["ip"] == self.status["node_info"].get("ip"):
+                        continue
+                    self._failed_ips.add(node["ip"])
+                    self.log(f"尝试节点: {node['hostname']} ({node['ip']})")
+                    if self.test_node(node):
+                        success = self.connect_node(node)
+                        if success:
+                            return
+                self.log("所有节点均不可用，等待下次检测")
 
     def start(self):
         self._stop_event.clear()
@@ -536,6 +590,14 @@ class VpnManager:
         self._bg_check_thread.start()
         self._auto_update_thread = threading.Thread(target=self._auto_update_loop, daemon=True)
         self._auto_update_thread.start()
+
+    def _get_subnet(self, ip, prefix_len=24):
+        """获取IP的前缀网络地址，例如 /24 返回前三段"""
+        try:
+            network = ipaddress.ip_network(f"{ip}/{prefix_len}", strict=False)
+            return network.network_address
+        except Exception:
+            return None
 
     def stop(self):
         self._stop_event.set()
