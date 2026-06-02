@@ -570,19 +570,29 @@ class VpnManager:
             self.log("自动连接失败：当前地区没有可用节点")
             return False, "当前地区没有可用节点"
 
-        # 获取上次连接的 IP（优先用 current_node，其次用 status 中的 node_info）
+        # 获取上次连接的 IP
         last_ip = None
         if self.current_node and self.current_node.get("ip"):
             last_ip = self.current_node["ip"]
         elif self.status["node_info"].get("ip"):
             last_ip = self.status["node_info"]["ip"]
 
+        # 找到当前节点在列表中的位置，从下一个开始尝试
+        start_index = 0
+        if last_ip:
+            for i, node in enumerate(nodes):
+                if node["ip"] == last_ip:
+                    start_index = i + 1
+                    break
+
         prefer_same_subnet = self.config.get("prefer_same_subnet", False)
         subnet_prefix = self.config.get("subnet_prefix_length", 24)
 
-        # 收集候选节点（排除 last_ip 和已失败 IP）
+        # 收集候选节点（按顺序，从 start_index 开始，绕回开头，跳过 last_ip 和已失败 IP）
         candidates = []
-        for node in nodes:
+        for i in range(len(nodes)):
+            idx = (start_index + i) % len(nodes)
+            node = nodes[idx]
             if node["ip"] == last_ip:
                 continue
             if node["ip"] in self._failed_ips:
@@ -593,7 +603,7 @@ class VpnManager:
             self.log("自动连接失败：没有其他可用节点")
             return False, "没有其他可用节点"
 
-        # 如果开启同子网优先，则将同子网节点排在前面
+        # 如果开启同子网优先，则将同子网节点排在前，其余保持相对顺序
         if prefer_same_subnet and last_ip:
             subnet_nodes = []
             other_nodes = []
