@@ -180,6 +180,11 @@
                         <small class="text-muted">例如：www.google.com,8.8.8.8，保存立即生效</small>
                     </div>
                     <div class="mb-3">
+                        <label>健康检测超时 (秒)</label>
+                        <input type="number" class="form-control" id="cfg-health-check-timeout" min="3" max="60" value="8">
+                        <small class="text-muted">curl 请求的最大等待时间，建议 8~20 秒，保存立即生效</small>
+                    </div>
+                    <div class="mb-3">
                         <label>延迟检测地址</label>
                         <input type="text" class="form-control" id="cfg-latency-check-target" placeholder="留空则使用 VPN 网关 IP">
                         <small class="text-muted">输入 IP 或域名，点击仪表盘"检测延迟"时会 ping 此地址，保存立即生效</small>
@@ -683,6 +688,7 @@
                     speedtest_retry: parseInt(document.getElementById("cfg-speedtest-retry").value) || 3,
                     prefer_same_subnet: document.getElementById("cfg-prefer-same-subnet").value === "true",
                     subnet_prefix_length: parseInt(document.getElementById("cfg-subnet-prefix-length").value) || 24,
+                    health_check_timeout: parseInt(document.getElementById("cfg-health-check-timeout").value) || 8,
                 };
                 try {
                     const saveRes = await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(newCfg) });
@@ -718,6 +724,7 @@
                 document.getElementById("cfg-speedtest-retry").value = cfg.speedtest_retry || 3;
                 document.getElementById("cfg-prefer-same-subnet").value = cfg.prefer_same_subnet === true ? "true" : "false";
                 document.getElementById("cfg-subnet-prefix-length").value = cfg.subnet_prefix_length || 24;
+                document.getElementById("cfg-health-check-timeout").value = cfg.health_check_timeout || 8;
                 configRegion = cfg.region || "all";
                 if (allNodesCache.length > 0) updateSettingsRegionDropdown();
                 else updateCurrentRegionText();
@@ -747,6 +754,7 @@
                 speedtest_retry: parseInt(document.getElementById("cfg-speedtest-retry").value) || 3,
                 prefer_same_subnet: document.getElementById("cfg-prefer-same-subnet").value === "true",
                 subnet_prefix_length: parseInt(document.getElementById("cfg-subnet-prefix-length").value) || 24,
+                health_check_timeout: parseInt(document.getElementById("cfg-health-check-timeout").value) || 8,
             };
             const msg = document.getElementById("settings-msg");
             try {
