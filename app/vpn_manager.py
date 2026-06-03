@@ -677,6 +677,30 @@ class VpnManager:
         except Exception:
             return None
 
+    def measure_nodes_latency(self, ips):
+        """
+        批量检测多个 IP 的延迟（不通过隧道，直接 ping）
+        返回字典 {ip: latency_ms 或 -1(超时)}
+        """
+        results = {}
+        for ip in ips:
+            try:
+                result = subprocess.run(
+                    ["ping", "-c", "1", "-W", "2", ip],
+                    capture_output=True, text=True, timeout=5
+                )
+                if "time=" in result.stdout:
+                    match = re.search(r"time=(\d+\.?\d*) ms", result.stdout)
+                    if match:
+                        results[ip] = round(float(match.group(1)), 1)
+                    else:
+                        results[ip] = -1
+                else:
+                    results[ip] = -1
+            except Exception:
+                results[ip] = -1
+        return results
+
     def stop(self):
         self._stop_event.set()
         self._auto_update_trigger.set()
