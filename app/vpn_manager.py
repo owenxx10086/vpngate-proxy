@@ -389,7 +389,7 @@ class VpnManager:
         except Exception:
             return False
 
-        # 2. 获取检测地址（优先使用用户自定义的 health_check_urls，否则用默认地址）
+        # 2. 获取检测地址（优先用户自定义，否则使用默认轻量地址）
         raw_urls = self.config.get("health_check_urls", "")
         if raw_urls.strip():
             import re
@@ -397,13 +397,12 @@ class VpnManager:
             urls = [u if u.startswith('http://') or u.startswith('https://') else f'http://{u}' for u in urls]
         else:
             urls = [
-                "http://httpbin.org/ip",   # 轻量级，返回纯文本，速度快
+                "http://httpbin.org/ip",
                 "http://ifconfig.me",
                 "http://www.google.com"
             ]
 
         socks_port = self.config.get("socks_port", 1080)
-        # 从配置读取超时时间（秒），默认 8 秒，若节点慢可调大
         timeout = self.config.get("health_check_timeout", 8)
         if not isinstance(timeout, (int, float)) or timeout < 3:
             timeout = 8
@@ -423,7 +422,6 @@ class VpnManager:
             except Exception as e:
                 self.log(f"健康检测尝试 {url} 异常: {e}")
 
-        # 所有地址均失败
         self.log("健康检测失败: 所有检测地址均无法访问")
         return False
 
