@@ -678,12 +678,10 @@ class VpnManager:
             return None
 
     def measure_nodes_latency(self, ips):
-        """
-        批量检测多个 IP 的延迟（不通过隧道，直接 ping）
-        返回字典 {ip: latency_ms 或 -1(超时)}
-        """
-        results = {}
-        for ip in ips:
+        """并发检测多个 IP 的延迟，返回字典 {ip: latency_ms 或 -1}"""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def ping_ip(ip):
             try:
                 result = subprocess.run(
                     ["ping", "-c", "1", "-W", "2", ip],
@@ -692,13 +690,17 @@ class VpnManager:
                 if "time=" in result.stdout:
                     match = re.search(r"time=(\d+\.?\d*) ms", result.stdout)
                     if match:
-                        results[ip] = round(float(match.group(1)), 1)
-                    else:
-                        results[ip] = -1
-                else:
-                    results[ip] = -1
+                        return ip, round(float(match.group(1)), 1)
             except Exception:
-                results[ip] = -1
+                pass
+            return ip, -1
+
+        results = {}
+        with ThreadPoolExecutor(max_workers=20) as executor:
+            futures = [executor.submit(ping_ip, ip) for ip in ips]
+            for future in as_completed(futures):
+                ip, lat = future.result()
+                results[ip] = lat
         return results
 
     def stop(self):
