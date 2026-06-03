@@ -176,8 +176,8 @@
                     </div>
                     <div class="mb-3">
                         <label>自定义健康检测地址</label>
-                        <textarea class="form-control" id="cfg-health-check-urls" rows="3" placeholder="健康检测使用Ping方式检测，多个地址用英文逗号或换行分隔，留空默认使用网关，如果网关禁止Ping则导致健康检测失败，建议自定义可以ping的地址"></textarea>
-                        <small class="text-muted">例如：www.google.com,8.8.8.8，保存立即生效</small>
+                        <textarea class="form-control" id="cfg-health-check-urls" rows="3" placeholder="使用URL的方式进行健康检测，留空默认访问的检测地址为：http://httpbin.org，http://ifconfig.me，http://www.google.com"></textarea>
+                        <small class="text-muted">可自定义多个，使用英文逗号隔开或者一行一个，格式为：http://xxxx.xxx，保存立即生效</small>
                     </div>
                     <div class="mb-3">
                         <label>健康检测超时 (秒)</label>
