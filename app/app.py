@@ -209,6 +209,18 @@ def latency():
     ms = manager.measure_latency()
     return jsonify({"latency_ms": ms if ms > 0 else None})
 
+@app.route("/api/nodes_latency", methods=["POST"])
+@login_required
+def nodes_latency():
+    data = request.get_json()
+    ips = data.get("ips", [])
+    if not isinstance(ips, list) or len(ips) == 0:
+        return jsonify({"error": "需要提供 IP 列表"}), 400
+    # 安全上限，避免恶意请求
+    ips = ips[:500]
+    latencies = manager.measure_nodes_latency(ips)
+    return jsonify({"latencies": latencies})
+
 @app.route("/api/speedtest")
 @login_required
 def speedtest():
