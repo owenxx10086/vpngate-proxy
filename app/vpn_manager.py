@@ -373,7 +373,7 @@ class VpnManager:
             return "127.0.0.1"
 
     def _is_tunnel_alive(self):
-        """通过隧道 ping 自定义或默认的目标地址，任一成功即健康"""
+        """通过 SOCKS5 代理访问自定义检测地址，任一成功即健康，支持重试与超时配置"""
         # 1. 检查进程和接口
         if not self.vpn_process or self.vpn_process.poll() is not None:
             return False
@@ -389,35 +389,42 @@ class VpnManager:
         except Exception:
             return False
 
-        # 2. 获取 ping 目标列表
-        raw_targets = self.config.get("health_check_urls", "")
-        if raw_targets.strip():
+        # 2. 获取检测地址（优先使用用户自定义的 health_check_urls，否则用默认地址）
+        raw_urls = self.config.get("health_check_urls", "")
+        if raw_urls.strip():
             import re
-            targets = [t.strip() for t in re.split(r'[,\n]', raw_targets) if t.strip()]
+            urls = [u.strip() for u in re.split(r'[,\n]', raw_urls) if u.strip()]
+            urls = [u if u.startswith('http://') or u.startswith('https://') else f'http://{u}' for u in urls]
         else:
-            # 默认目标：优先 ping 网关，其次 8.8.8.8
-            targets = []
-            if self.vpn_gateway:
-                targets.append(self.vpn_gateway)
-            targets.append("8.8.8.8")
+            urls = [
+                "http://httpbin.org/ip",   # 轻量级，返回纯文本，速度快
+                "http://ifconfig.me",
+                "http://www.google.com"
+            ]
 
-        # 3. 逐个 ping，任一成功即返回 True
-        for target in targets:
+        socks_port = self.config.get("socks_port", 1080)
+        # 从配置读取超时时间（秒），默认 8 秒，若节点慢可调大
+        timeout = self.config.get("health_check_timeout", 8)
+        if not isinstance(timeout, (int, float)) or timeout < 3:
+            timeout = 8
+
+        for url in urls:
             try:
                 result = subprocess.run(
-                    ["ping", "-c", "1", "-W", "2", "-I", self.tun_dev, target],
-                    capture_output=True, text=True, timeout=5
+                    ["curl", "-s", "--socks5", f"127.0.0.1:{socks_port}",
+                     "--max-time", str(timeout), url],
+                    capture_output=True, text=True, timeout=timeout + 3
                 )
-                if "1 received" in result.stdout:
-                    self.log(f"健康检测成功: ping {target} 可达")
+                if result.returncode == 0 and result.stdout.strip():
+                    self.log(f"健康检测成功: {url} 访问正常")
                     return True
                 else:
-                    self.log(f"健康检测尝试 ping {target} 失败: 无响应或丢包")
+                    self.log(f"健康检测尝试 {url} 失败: {result.stderr.strip() or '无返回数据'}")
             except Exception as e:
-                self.log(f"健康检测尝试 ping {target} 异常: {e}")
+                self.log(f"健康检测尝试 {url} 异常: {e}")
 
-        # 全部失败
-        self.log("健康检测失败: 所有目标均 ping 不通")
+        # 所有地址均失败
+        self.log("健康检测失败: 所有检测地址均无法访问")
         return False
 
     def measure_latency(self):
