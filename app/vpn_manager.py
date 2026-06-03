@@ -196,6 +196,7 @@ class VpnManager:
 
     def connect_node(self, node):
         self.disconnect()
+        time.sleep(0.5)
         self.current_node = node
         self.log(f"正在连接到节点: {node['hostname']} ({node['ip']})")
 
@@ -332,13 +333,23 @@ class VpnManager:
             self.log("断开当前连接...")
             try:
                 self.vpn_process.terminate()
+                try:
+                    self.vpn_process.stdout.close()   # 显式关闭管道，防止冲突
+                except Exception:
+                    pass
                 self.vpn_process.wait(timeout=3)
             except Exception:
                 try:
                     self.vpn_process.kill()
+                    try:
+                        self.vpn_process.stdout.close()
+                    except Exception:
+                        pass
+                    self.vpn_process.wait(timeout=3)
                 except Exception:
                     pass
             self.vpn_process = None
+            
         if self.socks_server:
             self.socks_server.stop()
             self.socks_server = None
