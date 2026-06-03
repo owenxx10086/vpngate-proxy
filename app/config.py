@@ -24,7 +24,8 @@ DEFAULT_CONFIG = {
     "speedtest_url": "http://cachefly.cachefly.net/1mb.test",
     "speedtest_retry": 3,
     "prefer_same_subnet": False,
-    "subnet_prefix_length": 24
+    "subnet_prefix_length": 24,
+    "health_check_timeout": 8
 }
 
 def load_config():
