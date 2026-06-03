@@ -85,11 +85,12 @@
                         <option value="all">所有地区</option>
                     </select>
                     <button id="refresh-btn" class="btn btn-primary">刷新列表</button>
+                    <button id="test-latency-btn" class="btn btn-info btn-sm ms-2">测试所有节点延迟</button>
                     <span id="refresh-status" class="ms-2 text-muted"></span>
                 </div>
                 <div id="node-stats" class="mb-2 text-muted small"></div>
                 <table class="table table-bordered table-striped">
-                    <thead><tr><th>#</th><th>国家</th><th>IP</th><th>速率</th><th>会话数</th><th>操作</th></tr></thead>
+                    <thead><tr><th>序号</th><th>国家</th><th>IP</th><th>速率</th><th>会话数</th><th>延迟</th><th>操作</th></tr></thead>
                     <tbody id="node-table"></tbody>
                 </table>
             </div>
@@ -413,16 +414,17 @@
             const tbody = document.getElementById("node-table");
             let html = "";
             nodes.forEach((n, idx) => {
-                html += `<tr>
+                html += `<tr id="node-row-${n.ip}">
                     <td>${idx+1}</td>
                     <td>${n.country_long} (${n.country_short})</td>
                     <td>${n.ip}</td>
                     <td>${n.speed} bps</td>
                     <td>${n.num_sessions}</td>
+                    <td class="latency-cell" data-ip="${n.ip}">-</td>
                     <td><button class="btn btn-sm btn-primary connect-btn" data-ip="${n.ip}" ${isConnecting ? 'disabled' : ''}>连接</button></td>
                 </tr>`;
             });
-            tbody.innerHTML = html || "<tr><td colspan='6'>无节点数据</td></tr>";
+            tbody.innerHTML = html || "<tr><td colspan='7'>无节点数据</td></tr>";
         }
 
         function updateStats(nodes) {
@@ -822,6 +824,48 @@
                 btn.textContent = "测速";
             }
         });
+
+        document.getElementById("test-latency-btn").addEventListener("click", async () => {
+        const btn = document.getElementById("test-latency-btn");
+        btn.disabled = true;
+        btn.textContent = "测试中...";
+        const cells = document.querySelectorAll(".latency-cell");
+        const ips = Array.from(cells).map(cell => cell.getAttribute("data-ip"));
+        if (ips.length === 0) {
+            showMessage("提示", "当前没有节点可测", "warning");
+            btn.disabled = false;
+            btn.textContent = "测试所有节点延迟";
+            return;
+        }
+        try {
+            const res = await fetch("/api/nodes_latency", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ ips })
+            });
+            if (!res.ok) {
+                const errData = await res.json().catch(() => ({}));
+                throw new Error(errData.error || `HTTP ${res.status}`);
+            }
+            const data = await res.json();
+            const latencies = data.latencies || {};
+            cells.forEach(cell => {
+                const ip = cell.getAttribute("data-ip");
+                const lat = latencies[ip];
+                if (lat !== undefined && lat !== null && lat >= 0) {
+                    cell.textContent = lat;
+                } else {
+                    cell.textContent = "超时";
+                }
+            });
+            showMessage("测试完成", "所有节点延迟已更新", "success");
+        } catch(e) {
+            showMessage("测试失败", e.message, "danger");
+        } finally {
+            btn.disabled = false;
+            btn.textContent = "测试所有节点延迟";
+        }
+    });
         
         // ---------- 监听标签页切换：当切换到节点列表时自动刷新 ----------
         document.addEventListener("DOMContentLoaded", () => {
