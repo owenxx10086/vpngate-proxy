@@ -660,8 +660,15 @@ class VpnManager:
 
     def auto_connect_next(self):
         """自动尝试优先节点，然后连接下一个节点（跳过当前节点，支持同IP段优先）"""
-        # 先尝试优先节点
-        if self._try_connect_preferred():
+        # 获取当前连接的IP
+        last_ip = None
+        if self.current_node and self.current_node.get("ip"):
+            last_ip = self.current_node["ip"]
+        elif self.status["node_info"].get("ip"):
+            last_ip = self.status["node_info"]["ip"]
+
+        # 先尝试优先节点，但跳过当前连接的IP
+        if self._try_connect_preferred(skip_ip=last_ip):
             return True, self.current_node["hostname"]
         
         region = self.config.get("region", "all")
@@ -800,14 +807,15 @@ class VpnManager:
                 ip, lat = future.result()
                 results[ip] = lat
         return results
-    def _try_connect_preferred(self):
-        """尝试连接优先节点，成功返回 True，否则 False"""
+    def _try_connect_preferred(self, skip_ip=None):
+        """尝试连接优先节点，可跳过指定IP"""
         if not self.preferred_nodes:
             return False
-        # 遍历保存的完整节点
         for node in self.preferred_nodes:
             if self._stop_event.is_set():
                 break
+            if skip_ip and node["ip"] == skip_ip:   # 跳过当前连接的IP
+                continue
             if node["ip"] in self._failed_ips:
                 continue
             self.log(f"尝试连接优先节点: {node['hostname']} ({node['ip']})")
