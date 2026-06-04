@@ -25,7 +25,9 @@ DEFAULT_CONFIG = {
     "speedtest_retry": 3,
     "prefer_same_subnet": False,
     "subnet_prefix_length": 24,
-    "health_check_timeout": 8
+    "health_check_timeout": 8,
+    "preferred_ips": [],
+    "connection_history_retention_days": 30
 }
 
 def load_config():
