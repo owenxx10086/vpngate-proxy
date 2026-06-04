@@ -27,7 +27,8 @@ DEFAULT_CONFIG = {
     "subnet_prefix_length": 24,
     "health_check_timeout": 8,
     "preferred_nodes": [],
-    "connection_history_retention_days": 30
+    "connection_history_retention_days": 30,
+    "socks_max_connections": 200
 }
 
 def load_config():
