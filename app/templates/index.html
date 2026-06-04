@@ -292,6 +292,8 @@
         let isRefreshing = false;
         let configRegion = "all";
         let fetchIntervalTimer = null;
+        let connectedSince = null;
+        let localTimer = null;
 
         function showMessage(title, message, type = "info") {
             document.getElementById("globalModalTitle").textContent = title;
@@ -350,17 +352,16 @@
                 document.getElementById("node-location").textContent = data.node_info?.country_long || "-";
                 const socksLink = data.socks || "-";
                 document.getElementById("socks-link").textContent = socksLink;
-                const connectedSince = data.connected_since;
-                const durationSpan = document.getElementById("connected-duration");
-                if (connectedSince) {
-                    const start = new Date(connectedSince);
-                    const diff = Math.floor((new Date() - start) / 1000);
-                    const h = Math.floor(diff / 3600);
-                    const m = Math.floor((diff % 3600) / 60);
-                    const s = diff % 60;
-                    durationSpan.textContent = `${h}时${m}分${s}秒`;
-                } else {
-                    durationSpan.textContent = "-";
+                const newConnectedSince = data.connected_since || null;
+                // 如果开始时间发生变化（断开或重连），重启本地计时器
+                if (newConnectedSince !== connectedSince) {
+                    connectedSince = newConnectedSince;
+                    if (connectedSince) {
+                        startLocalTimer();
+                    } else {
+                        stopLocalTimer();
+                        document.getElementById("connected-duration").textContent = "-";
+                    }
                 }
                 const copyBtn = document.getElementById("copy-socks-btn");
                 copyBtn.disabled = !(data.connected && socksLink !== "-");
@@ -388,6 +389,26 @@
                 fallbackCopy(socks, btn);
             }
         });
+
+        function startLocalTimer() {
+            stopLocalTimer();
+            if (!connectedSince) return;
+            localTimer = setInterval(() => {
+                const start = new Date(connectedSince);
+                const diff = Math.floor((new Date() - start) / 1000);
+                const h = Math.floor(diff / 3600);
+                const m = Math.floor((diff % 3600) / 60);
+                const s = diff % 60;
+                document.getElementById("connected-duration").textContent = `${h}时${m}分${s}秒`;
+            }, 1000);
+        }
+
+        function stopLocalTimer() {
+            if (localTimer) {
+                clearInterval(localTimer);
+                localTimer = null;
+            }
+        }
 
         function fallbackCopy(text, btn) {
             const textarea = document.createElement("textarea");
