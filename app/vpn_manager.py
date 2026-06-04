@@ -819,6 +819,22 @@ class VpnManager:
     def stop(self):
         self._stop_event.set()
         self._auto_update_trigger.set()
+    
+        # 清理所有未结束的连接记录（防止异常停止导致记录缺失结束信息）
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        for rec in self.connection_history:
+            if rec.get("end_time") is None:
+                rec["end_time"] = now_str
+                try:
+                    start = datetime.strptime(rec["start_time"], "%Y-%m-%d %H:%M:%S")
+                    duration = datetime.strptime(now_str, "%Y-%m-%d %H:%M:%S") - start
+                    rec["duration"] = str(duration).split('.')[0]
+                except Exception:
+                    pass
+        self._save_history()
+    
         self.disconnect()
         if self._history_clean_thread and self._history_clean_thread.is_alive():
             self._history_clean_thread.join(timeout=2)
+
+
