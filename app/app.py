@@ -1,5 +1,10 @@
 import eventlet
 eventlet.monkey_patch()
+import resource
+soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
+import eventlet.debug
+eventlet.debug.hub_prevent_multiple_readers(False)
 import os
 import time
 import threading
