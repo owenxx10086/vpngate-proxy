@@ -26,7 +26,7 @@ DEFAULT_CONFIG = {
     "prefer_same_subnet": False,
     "subnet_prefix_length": 24,
     "health_check_timeout": 8,
-    "preferred_ips": [],
+    "preferred_nodes": [],
     "connection_history_retention_days": 30
 }
 
