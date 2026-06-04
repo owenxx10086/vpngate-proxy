@@ -106,7 +106,13 @@ def nodes():
 def connect():
     data = request.json
     ip = data.get("ip")
+    # 先在当前节点列表中查找
     for node in manager.nodes:
+        if node["ip"] == ip:
+            success = manager.connect_node(node)
+            return jsonify({"success": success})
+    # 如果当前列表中没有，尝试从优先节点中获取（已保存完整配置）
+    for node in manager.preferred_nodes:
         if node["ip"] == ip:
             success = manager.connect_node(node)
             return jsonify({"success": success})
