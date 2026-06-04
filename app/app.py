@@ -5,6 +5,7 @@ import time
 import threading
 import logging
 import secrets
+import signal
 from logging.handlers import TimedRotatingFileHandler
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for
 from flask_socketio import SocketIO, emit
@@ -330,6 +331,12 @@ def handle_preferred_nodes():
         save_config(manager.config)
         return jsonify({"success": True})
     return jsonify({"success": False, "error": "无效操作"})
+
+def graceful_shutdown(signum, frame):
+    manager.stop()
+
+signal.signal(signal.SIGTERM, graceful_shutdown)
+signal.signal(signal.SIGINT, graceful_shutdown)
 
 if __name__ == "__main__":
     threading.Thread(target=manager.start, daemon=True).start()
