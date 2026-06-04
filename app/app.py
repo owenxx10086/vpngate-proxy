@@ -324,19 +324,23 @@ def handle_preferred_nodes():
     ip = data.get("ip")
     action = data.get("action")  # "add" 或 "remove"
     if action == "add":
-        # 查找该 IP 对应的完整节点（从当前节点列表）
         target_node = None
+        # 先从当前节点列表中查找
         for n in manager.nodes:
             if n["ip"] == ip:
                 target_node = n
                 break
+        # 如果列表中没有，但当前连接的节点IP匹配，则使用当前连接信息
+        if not target_node and manager.status.get("connected"):
+            current_info = manager.status.get("node_info", {})
+            if current_info.get("ip") == ip:
+                target_node = current_info
         if not target_node:
-            return jsonify({"success": False, "error": "该节点不在当前节点列表中，无法获取节点配置，无法设置优先连接"})
+            return jsonify({"success": False, "error": "该节点不在当前节点列表中，且不是当前连接节点，无法设置优先连接"})
         if len(manager.preferred_nodes) >= 3:
             return jsonify({"success": False, "error": "最多只能设置3个优先节点"})
-        # 避免重复添加
         if any(n["ip"] == ip for n in manager.preferred_nodes):
-            return jsonify({"success": True})  # 已存在，直接返回成功
+            return jsonify({"success": True})  # 已存在
         manager.preferred_nodes.append(target_node)
         manager.config["preferred_nodes"] = manager.preferred_nodes
         save_config(manager.config)
