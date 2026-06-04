@@ -283,10 +283,26 @@ def get_connection_history():
     sort_field = request.args.get("sort", "start_time")
     order = request.args.get("order", "desc")
     history = list(manager.connection_history)
-    # 排序
+    # 排序前确保字段可比较，None 替换为空字符串或 0
     reverse = (order == "desc")
-    if sort_field in ("start_time", "duration"):
-        history.sort(key=lambda x: x.get(sort_field, ""), reverse=reverse)
+    if sort_field == "start_time":
+        history.sort(key=lambda x: x.get("start_time") or "", reverse=reverse)
+    elif sort_field == "duration":
+        # 将 duration 转换为秒数进行比较，None 或 空字符串视为 0
+        def duration_key(rec):
+            dur = rec.get("duration")
+            if not dur:
+                return 0
+            try:
+                # 解析 HH:MM:SS 格式
+                parts = list(map(int, dur.split(':')))
+                if len(parts) == 3:
+                    return parts[0] * 3600 + parts[1] * 60 + parts[2]
+                else:
+                    return 0
+            except:
+                return 0
+        history.sort(key=duration_key, reverse=reverse)
     return jsonify(history)
 
 @app.route("/api/connection_history/<record_id>", methods=["DELETE"])
