@@ -40,7 +40,6 @@ root_logger.addHandler(console_handler)
 app = Flask(__name__)
 app.config['SESSION_COOKIE_NAME'] = 'vpngate_proxy_session'
 
-cfg = load_config()
 app.secret_key = cfg.get("secret_key") or secrets.token_hex(24)
 
 socketio = SocketIO(app, async_mode="eventlet")
@@ -310,13 +309,13 @@ def handle_preferred_nodes():
         if ip not in manager.preferred_ips:
             manager.preferred_ips.append(ip)
             manager.config["preferred_ips"] = manager.preferred_ips
-            config.save_config(manager.config)
+            save_config(manager.config)   # 改为 save_config
         return jsonify({"success": True})
     elif action == "remove":
         if ip in manager.preferred_ips:
             manager.preferred_ips.remove(ip)
             manager.config["preferred_ips"] = manager.preferred_ips
-            config.save_config(manager.config)
+            save_config(manager.config)   # 改为 save_config
         return jsonify({"success": True})
     return jsonify({"success": False, "error": "无效操作"})
 
