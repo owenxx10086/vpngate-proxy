@@ -138,6 +138,11 @@
                         <small class="text-muted">SOCKS代理的端口，重启生效</small>
                     </div>
                     <div class="mb-3">
+                        <label>SOCKS 最大并发连接数</label>
+                        <input type="number" class="form-control" id="cfg-socks-max-connections" min="10" max="1000" value="200">
+                        <small class="text-muted">并发连接数上限，重启生效</small>
+                    </div>
+                    <div class="mb-3">
                         <label>面板端口</label>
                         <input type="number" class="form-control" id="cfg-web-port">
                         <small class="text-muted">面板端口，重启生效</small>
@@ -741,6 +746,7 @@
                     subnet_prefix_length: parseInt(document.getElementById("cfg-subnet-prefix-length").value) || 24,
                     health_check_timeout: parseInt(document.getElementById("cfg-health-check-timeout").value) || 8,
                     connection_history_retention_days: parseInt(document.getElementById("cfg-history-retention-days").value) || 30,
+                    socks_max_connections: parseInt(document.getElementById("cfg-socks-max-connections").value) || 200,
                 };
                 try {
                     const saveRes = await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(newCfg) });
@@ -778,6 +784,7 @@
                 document.getElementById("cfg-subnet-prefix-length").value = cfg.subnet_prefix_length || 24;
                 document.getElementById("cfg-health-check-timeout").value = cfg.health_check_timeout || 8;
                 document.getElementById("cfg-history-retention-days").value = cfg.connection_history_retention_days || 30;
+                document.getElementById("cfg-socks-max-connections").value = cfg.socks_max_connections || 200;
                 configRegion = cfg.region || "all";
                 if (allNodesCache.length > 0) updateSettingsRegionDropdown();
                 else updateCurrentRegionText();
@@ -809,6 +816,7 @@
                 subnet_prefix_length: parseInt(document.getElementById("cfg-subnet-prefix-length").value) || 24,
                 health_check_timeout: parseInt(document.getElementById("cfg-health-check-timeout").value) || 8,
                 connection_history_retention_days: parseInt(document.getElementById("cfg-history-retention-days").value) || 30,
+                socks_max_connections: parseInt(document.getElementById("cfg-socks-max-connections").value) || 200,
             };
             const msg = document.getElementById("settings-msg");
             try {
