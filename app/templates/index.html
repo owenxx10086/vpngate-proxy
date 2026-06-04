@@ -11,6 +11,7 @@
         .log-area { height: 817px; overflow-y: auto; background: #222; color: #0f0; font-family: monospace; padding: 10px; }
         .status-card { margin-bottom: 15px; }
         .modal-log-area { height: 200px; overflow-y: auto; background: #1e1e1e; color: #0f0; font-family: monospace; padding: 10px; font-size: 0.85rem; }
+        #history-table.loading {pointer-events: none;opacity: 0.6;}
     </style>
 </head>
 <body>
@@ -958,6 +959,8 @@
         async function loadHistory(sort = "start_time", order = "desc") {
             const status = document.getElementById("history-refresh-status");
             status.textContent = "加载中...";
+            const table = document.getElementById("history-table");
+            table.classList.add("loading");   // 禁用表格操作
             try {
                 const res = await fetch(`/api/connection_history?sort=${sort}&order=${order}`);
                 if (!res.ok) throw new Error((await res.json().catch(()=>{})).error || "HTTP " + res.status);
@@ -968,6 +971,8 @@
                 showMessage("加载失败", e.message, "danger");
                 status.textContent = "加载失败";
                 setTimeout(() => { status.textContent = ""; }, 2000);
+            } finally {
+                table.classList.remove("loading");   // 恢复操作
             }
         }
 
