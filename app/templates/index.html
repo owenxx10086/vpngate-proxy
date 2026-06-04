@@ -100,6 +100,7 @@
             <div class="tab-pane fade" id="history">
                 <div class="mb-3">
                     <button id="refresh-history-btn" class="btn btn-primary">刷新记录</button>
+                    <span id="history-refresh-status" class="ms-2 text-muted"></span>
                 </div>
                 <table class="table table-bordered table-striped">
                     <thead>
@@ -955,12 +956,18 @@
 
         // 获取历史记录（支持排序）
         async function loadHistory(sort = "start_time", order = "desc") {
+            const status = document.getElementById("history-refresh-status");
+            status.textContent = "加载中...";
             try {
                 const res = await fetch(`/api/connection_history?sort=${sort}&order=${order}`);
+                if (!res.ok) throw new Error((await res.json().catch(()=>{})).error || "HTTP " + res.status);
                 const data = await res.json();
                 renderHistoryTable(data);
+                status.textContent = "";
             } catch(e) {
                 showMessage("加载失败", e.message, "danger");
+                status.textContent = "加载失败";
+                setTimeout(() => { status.textContent = ""; }, 2000);
             }
         }
 
@@ -1025,6 +1032,9 @@
                     if (targetId === '#nodes') {
                         // 切换到节点列表页时，使用当前选择的地区刷新表格
                         refreshNodes();
+                        } else if (targetId === '#history') {
+                            loadHistory();
+                        }
                     }
                 });
             });
