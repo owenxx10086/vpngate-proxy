@@ -304,7 +304,7 @@ class VpnManager:
 
         socks_bind = "0.0.0.0"
         socks_port = self.config["socks_port"]
-        self.socks_server = Socks5Server(socks_bind, socks_port, tun_ip)
+        self.socks_server = Socks5Server(socks_bind, socks_port, tun_ip, max_connections=200)
         self.socks_server.start()
 
         self.status["connected"] = True
