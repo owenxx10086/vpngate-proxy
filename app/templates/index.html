@@ -921,8 +921,19 @@
         function renderHistoryTable(history) {
             const tbody = document.getElementById("history-table");
             let html = "";
+            // 定义三种不同的按钮样式，分别用于第1、2、3个优先节点
+            const prefColors = ["btn-warning", "btn-info", "btn-success"];  // 黄、蓝、绿
             history.forEach((rec, idx) => {
-                const isPreferred = preferredIps.includes(rec.ip);
+                const prefIndex = preferredIps.indexOf(rec.ip);  // 在优先列表中的位置，-1表示非优先
+                let prefBtnClass = "btn-outline-warning";        // 默认非优先按钮样式
+                let action = "add";
+                let btnText = "设为优先连接";
+                if (prefIndex >= 0 && prefIndex < prefColors.length) {
+                    // 是优先节点，使用对应颜色
+                    prefBtnClass = prefColors[prefIndex];
+                    action = "remove";
+                    btnText = "取消优先连接";
+                }
                 html += `<tr>
                     <td>${idx+1}</td>
                     <td>${rec.hostname}</td>
@@ -932,8 +943,8 @@
                     <td>${rec.end_time || "-"}</td>
                     <td>${rec.duration || "-"}</td>
                     <td>
-                        <button class="btn btn-sm ${isPreferred ? 'btn-warning' : 'btn-outline-warning'} pref-btn" data-ip="${rec.ip}" data-action="${isPreferred ? 'remove' : 'add'}">
-                            ${isPreferred ? '取消优先连接' : '设为优先连接'}
+                        <button class="btn btn-sm ${prefBtnClass} pref-btn" data-ip="${rec.ip}" data-action="${action}">
+                            ${btnText}
                         </button>
                         <button class="btn btn-sm btn-danger del-btn" data-id="${rec.id}">删除</button>
                     </td>
