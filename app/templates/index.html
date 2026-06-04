@@ -499,6 +499,7 @@
         function setConnecting(state) {
             isConnecting = state;
             document.querySelectorAll(".connect-btn").forEach(btn => { btn.disabled = state; });
+            document.querySelectorAll(".connect-btn-history").forEach(btn => { btn.disabled = state; });
         }
 
         async function updateAllNodesCache() {
@@ -944,18 +945,19 @@
         function renderHistoryTable(history) {
             const tbody = document.getElementById("history-table");
             let html = "";
-            // 定义三种不同的按钮样式，分别用于第1、2、3个优先节点
-            const prefColors = ["btn-warning", "btn-info", "btn-success"];  // 黄、蓝、绿
+            const prefColors = ["btn-warning", "btn-info", "btn-success"];
             history.forEach((rec, idx) => {
-                const prefIndex = preferredIps.indexOf(rec.ip);  // 在优先列表中的位置，-1表示非优先
-                let prefBtnClass = "btn-outline-warning";        // 默认非优先按钮样式
+                const prefIndex = preferredIps.indexOf(rec.ip);
+                let prefBtnClass = "btn-outline-warning";
                 let action = "add";
                 let btnText = "设为优先连接";
+                let connectBtnHtml = "";
                 if (prefIndex >= 0 && prefIndex < prefColors.length) {
-                    // 是优先节点，使用对应颜色
                     prefBtnClass = prefColors[prefIndex];
                     action = "remove";
                     btnText = "取消优先连接";
+                    // 添加连接按钮，仅优先节点显示
+                    connectBtnHtml = `<button class="btn btn-sm btn-primary connect-btn-history" data-ip="${rec.ip}" ${isConnecting ? 'disabled' : ''}>连接</button>`;
                 }
                 html += `<tr>
                     <td>${idx+1}</td>
@@ -966,6 +968,7 @@
                     <td>${rec.end_time || "-"}</td>
                     <td>${rec.duration || "-"}</td>
                     <td>
+                        ${connectBtnHtml}
                         <button class="btn btn-sm ${prefBtnClass} pref-btn" data-ip="${rec.ip}" data-action="${action}">
                             ${btnText}
                         </button>
@@ -1010,6 +1013,11 @@
 
         // 操作按钮事件（委托）
         document.getElementById("history-table").addEventListener("click", async (e) => {
+                if (e.target.classList.contains("connect-btn-history")) {
+                    const ip = e.target.getAttribute("data-ip");
+                    if (ip) connectNode(ip);
+                    return;
+                }
             if (e.target.classList.contains("pref-btn")) {
                 const ip = e.target.getAttribute("data-ip");
                 const action = e.target.getAttribute("data-action");
