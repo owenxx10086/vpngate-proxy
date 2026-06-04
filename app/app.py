@@ -314,7 +314,7 @@ def handle_preferred_nodes():
                 target_node = n
                 break
         if not target_node:
-            return jsonify({"success": False, "error": "该节点不在当前节点列表中，无法设置优先连接"})
+            return jsonify({"success": False, "error": "该节点不在当前节点列表中，无法获取节点配置，无法设置优先连接"})
         if len(manager.preferred_nodes) >= 3:
             return jsonify({"success": False, "error": "最多只能设置3个优先节点"})
         # 避免重复添加
