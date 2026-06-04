@@ -299,23 +299,35 @@ def delete_connection_history(record_id):
 @login_required
 def handle_preferred_nodes():
     if request.method == "GET":
-        return jsonify({"preferred_ips": manager.preferred_ips})
+        # 仅返回 IP 列表供前端显示
+        ips = [node["ip"] for node in manager.preferred_nodes]
+        return jsonify({"preferred_ips": ips})
+    
     data = request.json
     ip = data.get("ip")
     action = data.get("action")  # "add" 或 "remove"
     if action == "add":
-        if len(manager.preferred_ips) >= 3:
+        # 查找该 IP 对应的完整节点（从当前节点列表）
+        target_node = None
+        for n in manager.nodes:
+            if n["ip"] == ip:
+                target_node = n
+                break
+        if not target_node:
+            return jsonify({"success": False, "error": "该节点不在当前节点列表中，无法设置优先连接"})
+        if len(manager.preferred_nodes) >= 3:
             return jsonify({"success": False, "error": "最多只能设置3个优先节点"})
-        if ip not in manager.preferred_ips:
-            manager.preferred_ips.append(ip)
-            manager.config["preferred_ips"] = manager.preferred_ips
-            save_config(manager.config)   # 改为 save_config
+        # 避免重复添加
+        if any(n["ip"] == ip for n in manager.preferred_nodes):
+            return jsonify({"success": True})  # 已存在，直接返回成功
+        manager.preferred_nodes.append(target_node)
+        manager.config["preferred_nodes"] = manager.preferred_nodes
+        save_config(manager.config)
         return jsonify({"success": True})
     elif action == "remove":
-        if ip in manager.preferred_ips:
-            manager.preferred_ips.remove(ip)
-            manager.config["preferred_ips"] = manager.preferred_ips
-            save_config(manager.config)   # 改为 save_config
+        manager.preferred_nodes = [n for n in manager.preferred_nodes if n["ip"] != ip]
+        manager.config["preferred_nodes"] = manager.preferred_nodes
+        save_config(manager.config)
         return jsonify({"success": True})
     return jsonify({"success": False, "error": "无效操作"})
 
