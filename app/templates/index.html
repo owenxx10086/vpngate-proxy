@@ -26,6 +26,7 @@
         <ul class="nav nav-tabs" id="mainTab" role="tablist">
             <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#dashboard">仪表盘</button></li>
             <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#nodes">节点列表</button></li>
+            <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#history">连接记录</button></li>
             <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#settings">设置</button></li>
         </ul>
         <div class="tab-content mt-3">
@@ -93,6 +94,27 @@
                 <table class="table table-bordered table-striped">
                     <thead><tr><th>序号</th><th>国家</th><th>IP</th><th>速率</th><th>会话数</th><th>延迟（ms）</th><th>操作</th></tr></thead>
                     <tbody id="node-table"></tbody>
+                </table>
+            </div>
+            <!-- 历史连接记录 -->
+            <div class="tab-pane fade" id="history">
+                <div class="mb-3">
+                    <button id="refresh-history-btn" class="btn btn-primary">刷新记录</button>
+                </div>
+                <table class="table table-bordered table-striped">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>节点名称</th>
+                            <th>IP</th>
+                            <th>国家</th>
+                            <th class="sortable" data-sort="start_time">开始连接时间 ↕</th>
+                            <th>结束连接时间</th>
+                            <th class="sortable" data-sort="duration">连接时长 ↕</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="history-table"></tbody>
                 </table>
             </div>
             <!-- 设置 -->
@@ -203,6 +225,11 @@
                         <label>日志保存天数</label>
                         <input type="number" class="form-control" id="cfg-log-retention-days" min="1" max="90" value="3">
                         <small class="text-muted">日志文件保留的天数，重启生效</small>
+                    </div>
+                    <div class="mb-3">
+                        <label>连接记录保留天数</label>
+                        <input type="number" class="form-control" id="cfg-history-retention-days" min="1" max="365" value="30">
+                        <small class="text-muted">超过天数的记录会被自动清理，保存立即生效</small>
                     </div>
                     <button type="submit" class="btn btn-success">保存</button>
                     <button type="button" id="restart-btn" class="btn btn-danger ms-2">保存并重启服务</button>
@@ -689,6 +716,7 @@
                     prefer_same_subnet: document.getElementById("cfg-prefer-same-subnet").value === "true",
                     subnet_prefix_length: parseInt(document.getElementById("cfg-subnet-prefix-length").value) || 24,
                     health_check_timeout: parseInt(document.getElementById("cfg-health-check-timeout").value) || 8,
+                    connection_history_retention_days: parseInt(document.getElementById("cfg-history-retention-days").value) || 30,
                 };
                 try {
                     const saveRes = await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(newCfg) });
@@ -725,6 +753,7 @@
                 document.getElementById("cfg-prefer-same-subnet").value = cfg.prefer_same_subnet === true ? "true" : "false";
                 document.getElementById("cfg-subnet-prefix-length").value = cfg.subnet_prefix_length || 24;
                 document.getElementById("cfg-health-check-timeout").value = cfg.health_check_timeout || 8;
+                document.getElementById("cfg-history-retention-days").value = cfg.connection_history_retention_days || 30;
                 configRegion = cfg.region || "all";
                 if (allNodesCache.length > 0) updateSettingsRegionDropdown();
                 else updateCurrentRegionText();
@@ -755,6 +784,7 @@
                 prefer_same_subnet: document.getElementById("cfg-prefer-same-subnet").value === "true",
                 subnet_prefix_length: parseInt(document.getElementById("cfg-subnet-prefix-length").value) || 24,
                 health_check_timeout: parseInt(document.getElementById("cfg-health-check-timeout").value) || 8,
+                connection_history_retention_days: parseInt(document.getElementById("cfg-history-retention-days").value) || 30,
             };
             const msg = document.getElementById("settings-msg");
             try {
@@ -875,13 +905,107 @@
             btn.textContent = "测试所有节点延迟";
         }
     });
-        
+
+        let preferredIps = [];  // 存储优先节点 IP 列表
+
+        // 加载优先节点
+        async function loadPreferredIps() {
+            try {
+                const res = await fetch("/api/preferred_nodes");
+                const data = await res.json();
+                preferredIps = data.preferred_ips || [];
+            } catch(e) { console.error(e); }
+        }
+
+        // 渲染连接历史表格
+        function renderHistoryTable(history) {
+            const tbody = document.getElementById("history-table");
+            let html = "";
+            history.forEach((rec, idx) => {
+                const isPreferred = preferredIps.includes(rec.ip);
+                html += `<tr>
+                    <td>${idx+1}</td>
+                    <td>${rec.hostname}</td>
+                    <td>${rec.ip}</td>
+                    <td>${rec.country}</td>
+                    <td>${rec.start_time || "-"}</td>
+                    <td>${rec.end_time || "-"}</td>
+                    <td>${rec.duration || "-"}</td>
+                    <td>
+                        <button class="btn btn-sm ${isPreferred ? 'btn-warning' : 'btn-outline-warning'} pref-btn" data-ip="${rec.ip}" data-action="${isPreferred ? 'remove' : 'add'}">
+                            ${isPreferred ? '取消优先连接' : '设为优先连接'}
+                        </button>
+                        <button class="btn btn-sm btn-danger del-btn" data-id="${rec.id}">删除</button>
+                    </td>
+                </tr>`;
+            });
+            tbody.innerHTML = html || "<tr><td colspan='8'>暂无记录</td></tr>";
+        }
+
+        // 获取历史记录（支持排序）
+        async function loadHistory(sort = "start_time", order = "desc") {
+            try {
+                const res = await fetch(`/api/connection_history?sort=${sort}&order=${order}`);
+                const data = await res.json();
+                renderHistoryTable(data);
+            } catch(e) {
+                showMessage("加载失败", e.message, "danger");
+            }
+        }
+
+        // 排序点击
+        document.getElementById("history").addEventListener("click", (e) => {
+            if (e.target.classList.contains("sortable")) {
+                const sortField = e.target.getAttribute("data-sort");
+                const currentOrder = e.target.getAttribute("data-order") || "desc";
+                const newOrder = currentOrder === "desc" ? "asc" : "desc";
+                e.target.setAttribute("data-order", newOrder);
+                loadHistory(sortField, newOrder);
+            }
+        });
+
+        // 操作按钮事件（委托）
+        document.getElementById("history-table").addEventListener("click", async (e) => {
+            if (e.target.classList.contains("pref-btn")) {
+                const ip = e.target.getAttribute("data-ip");
+                const action = e.target.getAttribute("data-action");
+                const res = await fetch("/api/preferred_nodes", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ ip, action })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    await loadPreferredIps();
+                    loadHistory(); // 重新渲染
+                    showMessage("操作成功", action === "add" ? "已设为优先连接" : "已取消优先连接", "success");
+                } else {
+                    showMessage("操作失败", data.error || "未知错误", "danger");
+                }
+            } else if (e.target.classList.contains("del-btn")) {
+                const recordId = e.target.getAttribute("data-id");
+                showConfirm("删除记录", "确定要删除该记录吗？", async (confirmed) => {
+                    if (!confirmed) return;
+                    const res = await fetch(`/api/connection_history/${recordId}`, { method: "DELETE" });
+                    if (res.ok) {
+                        loadHistory();
+                    } else {
+                        showMessage("删除失败", "请稍后再试", "danger");
+                    }
+                });
+            }
+        });
+
+        // 刷新记录按钮
+        document.getElementById("refresh-history-btn").addEventListener("click", () => loadHistory());
         // ---------- 监听标签页切换：当切换到节点列表时自动刷新 ----------
         document.addEventListener("DOMContentLoaded", () => {
             loadSettings();
             loadHistoricalLogs();           // <-- 新增：加载历史日志
             updateAllNodesCache().then(() => refreshNodes());
             loadSystemInfo();
+            loadPreferredIps();
+            loadHistory();
 
             // 监听标签页切换事件 (Bootstrap 5)
             document.querySelectorAll('#mainTab button[data-bs-toggle="tab"]').forEach(tabEl => {
