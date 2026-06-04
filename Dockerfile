@@ -1,10 +1,11 @@
 FROM python:3.10-slim
 
-# 接收构建参数（默认值用于本地构建）
 ARG IMAGE_VERSION=本地构建
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    openvpn iproute2 iptables procps curl iputils-ping \
+    openvpn iproute2 iptables procps curl iputils-ping tzdata \
+    && ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
+    && echo "Asia/Shanghai" > /etc/timezone \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -14,7 +15,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app/ ./app/
 
-# 将版本信息写入文件
 RUN echo "$IMAGE_VERSION" > /app/version.txt
 
 EXPOSE 8080
