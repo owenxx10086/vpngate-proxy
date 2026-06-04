@@ -40,11 +40,14 @@ logger.propagate = False
 # -----------------------------------------
 
 class Socks5Server:
-    """极简 SOCKS5 代理，出口流量绑定到指定接口 IP"""
-    def __init__(self, bind_host, bind_port, outbound_ip):
+    """极简 SOCKS5 代理，出口流量绑定到指定接口 IP，支持最大并发连接数限制"""
+    def __init__(self, bind_host, bind_port, outbound_ip, max_connections=200):
         self.bind_host = bind_host
         self.bind_port = bind_port
         self.outbound_ip = outbound_ip
+        self.max_connections = max_connections
+        self.active_connections = 0
+        self.lock = threading.Lock()
         self.server_socket = None
         self.running = False
         self.thread = None
@@ -71,6 +74,12 @@ class Socks5Server:
         while self.running:
             try:
                 client_sock, addr = self.server_socket.accept()
+                with self.lock:
+                    if self.active_connections >= self.max_connections:
+                        # 超过最大连接数，直接关闭新连接
+                        client_sock.close()
+                        continue
+                    self.active_connections += 1
                 threading.Thread(target=self._handle_client, args=(client_sock,), daemon=True).start()
             except OSError:
                 if self.running:
@@ -172,6 +181,8 @@ class Socks5Server:
                 client_sock.close()
             except:
                 pass
+            with self.lock:
+                self.active_connections -= 1
 
     def _send_reply(self, sock, rep):
         """发送错误响应"""
