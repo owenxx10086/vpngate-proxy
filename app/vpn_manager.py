@@ -48,7 +48,7 @@ class VpnManager:
         self._available_nodes = []
         self.policy_routing_set = False
         self._failed_ips = set()
-        self.preferred_ips = self.config.get("preferred_ips", [])
+        self.preferred_nodes = self.config.get("preferred_nodes", [])
         self.history_file = "/data/connection_history.json"
         self.connection_history = self._load_history()
         self._history_clean_thread = None
@@ -66,7 +66,7 @@ class VpnManager:
         config.save_config(cfg)
         self.max_health_fails = self.config.get("health_fail_threshold", 3)
         self.health_check_interval = self.config.get("health_check_interval", 10)
-        self.preferred_ips = self.config.get("preferred_ips", [])
+        self.preferred_nodes = self.config.get("preferred_nodes", [])
         self._auto_update_trigger.set()
 
     def fetch_nodes(self):
@@ -802,11 +802,10 @@ class VpnManager:
         return results
     def _try_connect_preferred(self):
         """尝试连接优先节点，成功返回 True，否则 False"""
-        if not self.preferred_ips:
+        if not self.preferred_nodes:
             return False
-        # 从当前节点列表中查找优先节点（允许跨地区）
-        preferred_nodes = [n for n in self.nodes if n["ip"] in self.preferred_ips]
-        for node in preferred_nodes:
+        # 遍历保存的完整节点
+        for node in self.preferred_nodes:
             if self._stop_event.is_set():
                 break
             if node["ip"] in self._failed_ips:
