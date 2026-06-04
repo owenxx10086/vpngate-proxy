@@ -276,6 +276,50 @@ def run_app():
     port = int(load_config().get("web_port", 8080))
     socketio.run(app, host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
+# 连接历史 API
+@app.route("/api/connection_history")
+@login_required
+def get_connection_history():
+    sort_field = request.args.get("sort", "start_time")
+    order = request.args.get("order", "desc")
+    history = list(manager.connection_history)
+    # 排序
+    reverse = (order == "desc")
+    if sort_field in ("start_time", "duration"):
+        history.sort(key=lambda x: x.get(sort_field, ""), reverse=reverse)
+    return jsonify(history)
+
+@app.route("/api/connection_history/<record_id>", methods=["DELETE"])
+@login_required
+def delete_connection_history(record_id):
+    manager.delete_connection_record(record_id)
+    return jsonify({"success": True})
+
+# 优先节点 API
+@app.route("/api/preferred_nodes", methods=["GET", "POST"])
+@login_required
+def handle_preferred_nodes():
+    if request.method == "GET":
+        return jsonify({"preferred_ips": manager.preferred_ips})
+    data = request.json
+    ip = data.get("ip")
+    action = data.get("action")  # "add" 或 "remove"
+    if action == "add":
+        if len(manager.preferred_ips) >= 3:
+            return jsonify({"success": False, "error": "最多只能设置3个优先节点"})
+        if ip not in manager.preferred_ips:
+            manager.preferred_ips.append(ip)
+            manager.config["preferred_ips"] = manager.preferred_ips
+            config.save_config(manager.config)
+        return jsonify({"success": True})
+    elif action == "remove":
+        if ip in manager.preferred_ips:
+            manager.preferred_ips.remove(ip)
+            manager.config["preferred_ips"] = manager.preferred_ips
+            config.save_config(manager.config)
+        return jsonify({"success": True})
+    return jsonify({"success": False, "error": "无效操作"})
+
 if __name__ == "__main__":
     threading.Thread(target=manager.start, daemon=True).start()
     run_app()
