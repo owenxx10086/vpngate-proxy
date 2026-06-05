@@ -92,10 +92,15 @@
                 </div>
                 <div id="node-stats" class="mb-2 text-muted small"></div>
                 <div class="mb-2 text-muted small">延迟检测仅供参考，节点可能会禁止ping导致延迟检测超时，节点列表的延迟检测是直接ping节点ip，仪表盘延迟检测是通过连接后的隧道ping的，这会导致两边延迟检测数值不一致</div>
-                <table class="table table-bordered table-striped">
-                    <thead><tr><th>序号</th><th>国家</th><th>IP</th><th>速率</th><th>会话数</th><th>延迟（ms）</th><th>操作</th></tr></thead>
-                    <tbody id="node-table"></tbody>
-                </table>
+                <thead><tr>
+                    <th>序号</th>
+                    <th>国家</th>
+                    <th class="sortable" data-sort="ip">IP ↕</th>
+                    <th class="sortable" data-sort="speed">速率 ↕</th>
+                    <th class="sortable" data-sort="num_sessions">会话数 ↕</th>
+                    <th>延迟（ms）</th>
+                    <th>操作</th>
+                </tr></thead>
             </div>
             <!-- 历史连接记录 -->
             <div class="tab-pane fade" id="history">
@@ -106,7 +111,7 @@
                 <table class="table table-bordered table-striped">
                     <thead>
                         <tr>
-                            <th>#</th>
+                            <th>序号</th>
                             <th>节点名称</th>
                             <th>IP</th>
                             <th>国家</th>
@@ -299,6 +304,8 @@
         let fetchIntervalTimer = null;
         let connectedSince = null;
         let localTimer = null;
+        let nodeSortField = "";
+        let nodeSortOrder = "desc";
 
         function showMessage(title, message, type = "info") {
             document.getElementById("globalModalTitle").textContent = title;
@@ -560,7 +567,7 @@
             }, ms);
         }
 
-        async function refreshNodes() {
+        async function refreshNodes(sort = nodeSortField, order = nodeSortOrder) {
             if (isRefreshing) return;
             const btn = document.getElementById("refresh-btn");
             const status = document.getElementById("refresh-status");
@@ -570,12 +577,13 @@
             const region = document.getElementById("region-filter").value;
             localStorage.setItem("selectedRegion", region);
             try {
-                const res = await fetch(`/api/nodes?region=${encodeURIComponent(region)}`);
+                const res = await fetch(`/api/nodes?region=${encodeURIComponent(region)}&sort=${encodeURIComponent(sort)}&order=${encodeURIComponent(order)}`);
                 if (!res.ok) throw new Error((await res.json().catch(()=>{})).error || `HTTP ${res.status}`);
                 const nodes = await res.json();
                 displayedNodes = nodes;
                 renderNodeTable(nodes);
                 updateStats(nodes);
+                // 更新缓存和下拉框逻辑保持不变
                 if (region !== "all") {
                     await updateAllNodesCache();
                 } else {
@@ -595,7 +603,11 @@
             }
         }
 
-        document.getElementById("region-filter").addEventListener("change", refreshNodes);
+        document.getElementById("region-filter").addEventListener("change", () => {
+            nodeSortField = "";
+            nodeSortOrder = "desc";
+            refreshNodes();
+        });
 
         // ---------- 连接节点（优化：重试耗尽后自动使用默认地区连接） ----------
         async function connectNode(ip, depth = 0) {
@@ -1087,6 +1099,22 @@
                         loadHistory();
                     }
                 });
+            });
+        });
+
+        document.querySelectorAll("#nodes th.sortable").forEach(th => {
+            th.addEventListener("click", () => {
+                const sortField = th.getAttribute("data-sort");
+                if (sortField === nodeSortField) {
+                    nodeSortOrder = nodeSortOrder === "asc" ? "desc" : "asc";
+                } else {
+                    nodeSortField = sortField;
+                    nodeSortOrder = "desc";
+                }
+                // 更新图标
+                document.querySelectorAll("#nodes th.sortable").forEach(h => h.textContent = h.textContent.replace(" ▲", "").replace(" ▼", ""));
+                th.textContent += nodeSortOrder === "asc" ? " ▲" : " ▼";
+                refreshNodes(nodeSortField, nodeSortOrder);
             });
         });
     </script>
