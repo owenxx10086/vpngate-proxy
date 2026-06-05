@@ -93,15 +93,7 @@
                 <div id="node-stats" class="mb-2 text-muted small"></div>
                 <div class="mb-2 text-muted small">延迟检测仅供参考，节点可能会禁止ping导致延迟检测超时，节点列表的延迟检测是直接ping节点ip，仪表盘延迟检测是通过连接后的隧道ping的，这会导致两边延迟检测数值不一致</div>
                 <table class="table table-bordered table-striped">
-                    <thead><tr>
-                        <th>序号</th>
-                        <th>国家</th>
-                        <th class="sortable" data-sort="ip">IP ↕</th>
-                        <th class="sortable" data-sort="speed">速率 ↕</th>
-                        <th class="sortable" data-sort="num_sessions">会话数 ↕</th>
-                        <th>延迟（ms） ↕</th>
-                        <th>操作</th>
-                    </tr></thead>
+                    <thead><tr><th>序号</th><th>国家</th><th>IP</th><th>速率</th><th>会话数</th><th>延迟（ms）</th><th>操作</th></tr></thead>
                     <tbody id="node-table"></tbody>
                 </table>
             </div>
@@ -114,7 +106,7 @@
                 <table class="table table-bordered table-striped">
                     <thead>
                         <tr>
-                            <th>序号</th>
+                            <th>#</th>
                             <th>节点名称</th>
                             <th>IP</th>
                             <th>国家</th>
@@ -307,9 +299,6 @@
         let fetchIntervalTimer = null;
         let connectedSince = null;
         let localTimer = null;
-        let nodeSortField = "";
-        let nodeSortOrder = "desc";
-        let latencyData = {};
 
         function showMessage(title, message, type = "info") {
             document.getElementById("globalModalTitle").textContent = title;
@@ -502,7 +491,7 @@
                     <td>${n.ip}</td>
                     <td>${n.speed} bps</td>
                     <td>${n.num_sessions}</td>
-                    <td class="latency-cell" data-ip="${n.ip}">${latencyData[n.ip] !== undefined ? latencyData[n.ip] : '-'}</td>
+                    <td class="latency-cell" data-ip="${n.ip}">-</td>
                     <td><button class="btn btn-sm btn-primary connect-btn" data-ip="${n.ip}" ${isConnecting ? 'disabled' : ''}>连接</button></td>
                 </tr>`;
             });
@@ -571,7 +560,7 @@
             }, ms);
         }
 
-        async function refreshNodes(sort = nodeSortField, order = nodeSortOrder) {
+        async function refreshNodes() {
             if (isRefreshing) return;
             const btn = document.getElementById("refresh-btn");
             const status = document.getElementById("refresh-status");
@@ -581,13 +570,12 @@
             const region = document.getElementById("region-filter").value;
             localStorage.setItem("selectedRegion", region);
             try {
-                const res = await fetch(`/api/nodes?region=${encodeURIComponent(region)}&sort=${encodeURIComponent(sort)}&order=${encodeURIComponent(order)}`);
+                const res = await fetch(`/api/nodes?region=${encodeURIComponent(region)}`);
                 if (!res.ok) throw new Error((await res.json().catch(()=>{})).error || `HTTP ${res.status}`);
                 const nodes = await res.json();
                 displayedNodes = nodes;
                 renderNodeTable(nodes);
                 updateStats(nodes);
-                // 更新缓存和下拉框逻辑保持不变
                 if (region !== "all") {
                     await updateAllNodesCache();
                 } else {
@@ -607,11 +595,7 @@
             }
         }
 
-        document.getElementById("region-filter").addEventListener("change", () => {
-            nodeSortField = "";
-            nodeSortOrder = "desc";
-            refreshNodes();
-        });
+        document.getElementById("region-filter").addEventListener("change", refreshNodes);
 
         // ---------- 连接节点（优化：重试耗尽后自动使用默认地区连接） ----------
         async function connectNode(ip, depth = 0) {
@@ -955,7 +939,6 @@
                     cell.textContent = "超时";
                 }
             });
-            Object.assign(latencyData, latencies);
             showMessage("测试完成", "所有节点延迟已更新", "success");
         } catch(e) {
             showMessage("测试失败", e.message, "danger");
@@ -1104,35 +1087,6 @@
                         loadHistory();
                     }
                 });
-            });
-        });
-
-        document.querySelectorAll("#nodes th.sortable").forEach(th => {
-            th.addEventListener("click", () => {
-                const sortField = th.getAttribute("data-sort");
-                if (sortField === nodeSortField) {
-                    nodeSortOrder = nodeSortOrder === "asc" ? "desc" : "asc";
-                } else {
-                    nodeSortField = sortField;
-                    nodeSortOrder = "desc";
-                }
-                // 更新图标
-                document.querySelectorAll("#nodes th.sortable").forEach(h => h.textContent = h.textContent.replace(" ▲", "").replace(" ▼", ""));
-                th.textContent += nodeSortOrder === "asc" ? " ▲" : " ▼";
-
-                // 如果是按延迟排序，则本地排序并重新渲染（不需要请求后端）
-                if (sortField === "latency") {
-                    const nodes = [...displayedNodes];
-                    nodes.sort((a, b) => {
-                        const la = latencyData[a.ip] !== undefined ? latencyData[a.ip] : -1;
-                        const lb = latencyData[b.ip] !== undefined ? latencyData[b.ip] : -1;
-                        return nodeSortOrder === "desc" ? lb - la : la - lb;
-                    });
-                    renderNodeTable(nodes);
-                    updateStats(nodes);  // 统计信息不变，但可保持更新
-                } else {
-                    refreshNodes(nodeSortField, nodeSortOrder);
-                }
             });
         });
     </script>
