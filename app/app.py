@@ -364,7 +364,7 @@ def handle_preferred_nodes():
     return jsonify({"success": False, "error": "无效操作"})
 
 def graceful_shutdown(signum, frame):
-    manager.stop()
+    threading.Thread(target=manager.stop, daemon=True).start()
 
 signal.signal(signal.SIGTERM, graceful_shutdown)
 signal.signal(signal.SIGINT, graceful_shutdown)
