@@ -62,6 +62,8 @@ class VpnManager:
             self._log_callback(message)
 
     def set_config(self, cfg):
+        if "preferred_nodes" not in cfg:
+            cfg["preferred_nodes"] = self.config.get("preferred_nodes", [])
         self.config = cfg
         config.save_config(cfg)
         self.max_health_fails = self.config.get("health_fail_threshold", 3)
