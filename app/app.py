@@ -98,23 +98,8 @@ def status():
 @login_required
 def nodes():
     region = request.args.get("region", "all")
-    sort_field = request.args.get("sort", "")
-    order = request.args.get("order", "desc")
     try:
         nodes = manager.filter_nodes(region)
-        # 安全转换数字字段
-        for n in nodes:
-            speed_val = n.get("speed")
-            n["speed_int"] = int(speed_val) if (speed_val or "").isdigit() else 0
-            sessions_val = n.get("num_sessions")
-            n["sessions_int"] = int(sessions_val) if (sessions_val or "").isdigit() else 0
-        # 排序
-        if sort_field == "ip":
-            nodes.sort(key=lambda x: x.get("ip", ""), reverse=(order == "desc"))
-        elif sort_field == "speed":
-            nodes.sort(key=lambda x: x["speed_int"], reverse=(order == "desc"))
-        elif sort_field == "num_sessions":
-            nodes.sort(key=lambda x: x["sessions_int"], reverse=(order == "desc"))
         limit = int(manager.config.get("node_limit", 200))
         return jsonify(nodes[:limit])
     except Exception as e:
