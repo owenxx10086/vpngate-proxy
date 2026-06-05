@@ -92,15 +92,18 @@
                 </div>
                 <div id="node-stats" class="mb-2 text-muted small"></div>
                 <div class="mb-2 text-muted small">延迟检测仅供参考，节点可能会禁止ping导致延迟检测超时，节点列表的延迟检测是直接ping节点ip，仪表盘延迟检测是通过连接后的隧道ping的，这会导致两边延迟检测数值不一致</div>
-                <thead><tr>
-                    <th>序号</th>
-                    <th>国家</th>
-                    <th class="sortable" data-sort="ip">IP ↕</th>
-                    <th class="sortable" data-sort="speed">速率 ↕</th>
-                    <th class="sortable" data-sort="num_sessions">会话数 ↕</th>
-                    <th>延迟（ms）</th>
-                    <th>操作</th>
-                </tr></thead>
+                <table class="table table-bordered table-striped">
+                    <thead><tr>
+                        <th>序号</th>
+                        <th>国家</th>
+                        <th class="sortable" data-sort="ip">IP ↕</th>
+                        <th class="sortable" data-sort="speed">速率 ↕</th>
+                        <th class="sortable" data-sort="num_sessions">会话数 ↕</th>
+                        <th>延迟（ms） ↕</th>
+                        <th>操作</th>
+                    </tr></thead>
+                    <tbody id="node-table"></tbody>
+                </table>
             </div>
             <!-- 历史连接记录 -->
             <div class="tab-pane fade" id="history">
@@ -306,6 +309,7 @@
         let localTimer = null;
         let nodeSortField = "";
         let nodeSortOrder = "desc";
+        let latencyData = {};
 
         function showMessage(title, message, type = "info") {
             document.getElementById("globalModalTitle").textContent = title;
@@ -498,7 +502,7 @@
                     <td>${n.ip}</td>
                     <td>${n.speed} bps</td>
                     <td>${n.num_sessions}</td>
-                    <td class="latency-cell" data-ip="${n.ip}">-</td>
+                    <td class="latency-cell" data-ip="${n.ip}">${latencyData[n.ip] !== undefined ? latencyData[n.ip] : '-'}</td>
                     <td><button class="btn btn-sm btn-primary connect-btn" data-ip="${n.ip}" ${isConnecting ? 'disabled' : ''}>连接</button></td>
                 </tr>`;
             });
@@ -951,6 +955,7 @@
                     cell.textContent = "超时";
                 }
             });
+            Object.assign(latencyData, latencies);
             showMessage("测试完成", "所有节点延迟已更新", "success");
         } catch(e) {
             showMessage("测试失败", e.message, "danger");
@@ -1114,7 +1119,20 @@
                 // 更新图标
                 document.querySelectorAll("#nodes th.sortable").forEach(h => h.textContent = h.textContent.replace(" ▲", "").replace(" ▼", ""));
                 th.textContent += nodeSortOrder === "asc" ? " ▲" : " ▼";
-                refreshNodes(nodeSortField, nodeSortOrder);
+
+                // 如果是按延迟排序，则本地排序并重新渲染（不需要请求后端）
+                if (sortField === "latency") {
+                    const nodes = [...displayedNodes];
+                    nodes.sort((a, b) => {
+                        const la = latencyData[a.ip] !== undefined ? latencyData[a.ip] : -1;
+                        const lb = latencyData[b.ip] !== undefined ? latencyData[b.ip] : -1;
+                        return nodeSortOrder === "desc" ? lb - la : la - lb;
+                    });
+                    renderNodeTable(nodes);
+                    updateStats(nodes);  // 统计信息不变，但可保持更新
+                } else {
+                    refreshNodes(nodeSortField, nodeSortOrder);
+                }
             });
         });
     </script>
