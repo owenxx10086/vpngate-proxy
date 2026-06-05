@@ -319,6 +319,12 @@
             document.getElementById("confirmNo").onclick = () => { globalModal.hide(); callback(false); };
         }
 
+        function isLogPanelAtBottom() {
+            const panel = document.getElementById("log-panel");
+            // 如果滚动位置距离底部小于 30px，认为在底部
+            return panel.scrollHeight - panel.clientHeight - panel.scrollTop < 30;
+        }
+
         // ========== 新增：加载历史日志 ==========
         async function loadHistoricalLogs() {
             try {
@@ -339,11 +345,15 @@
 
         socket.on("log", (data) => {
             const msg = `<div>${data.message}</div>`;
+            const atBottom = isLogPanelAtBottom();  // 记录是否在底部
             logPanel.innerHTML += msg;
-            logPanel.scrollTop = logPanel.scrollHeight;
+            // 只有之前位于底部时才自动滚动到最新
+            if (atBottom) {
+                logPanel.scrollTop = logPanel.scrollHeight;
+            }
             if (modalVisible) {
                 modalLogPanel.innerHTML += msg;
-                modalLogPanel.scrollTop = modalLogPanel.scrollHeight;
+                modalLogPanel.scrollTop = modalLogPanel.scrollHeight; // 模态框总是滚动
             }
         });
 
