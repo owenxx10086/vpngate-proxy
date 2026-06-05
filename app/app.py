@@ -102,10 +102,12 @@ def nodes():
     order = request.args.get("order", "desc")
     try:
         nodes = manager.filter_nodes(region)
-        # 将字符串字段转为可排序的数字
+        # 安全转换数字字段
         for n in nodes:
-            n["speed_int"] = int(n.get("speed", 0)) if n.get("speed", "").isdigit() else 0
-            n["sessions_int"] = int(n.get("num_sessions", 0)) if n.get("num_sessions", "").isdigit() else 0
+            speed_val = n.get("speed")
+            n["speed_int"] = int(speed_val) if (speed_val or "").isdigit() else 0
+            sessions_val = n.get("num_sessions")
+            n["sessions_int"] = int(sessions_val) if (sessions_val or "").isdigit() else 0
         # 排序
         if sort_field == "ip":
             nodes.sort(key=lambda x: x.get("ip", ""), reverse=(order == "desc"))
