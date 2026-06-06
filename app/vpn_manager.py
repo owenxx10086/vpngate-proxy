@@ -214,7 +214,7 @@ class VpnManager:
             ovpn_content = base64.b64decode(config_b64).decode("utf-8")
         except Exception:
             self.log("解码 OpenVPN 配置失败")
-            self._failed_ips.add(node["ip"])   # 标记失败 IP
+            self._failed_ips.add(node["ip"])
             return False
 
         auth_path = "/tmp/vpn_auth.txt"
@@ -239,7 +239,7 @@ class VpnManager:
             )
         except Exception as e:
             self.log(f"启动 OpenVPN 失败: {str(e)}")
-            self._failed_ips.add(node["ip"])   # 标记失败 IP
+            self._failed_ips.add(node["ip"])
             return False
 
         tun_ip = None
@@ -249,11 +249,12 @@ class VpnManager:
         start_time = time.time()
         timeout = 25
 
-        if self.vpn_process.poll() is not None:
-            self.log("OpenVPN 进程已退出，连接失败")
-            self._failed_ips.add(node["ip"])   # 标记失败 IP
-            self.vpn_process = None
-            return False
+        while time.time() - start_time < timeout:
+            if self.vpn_process.poll() is not None:
+                self.log("OpenVPN 进程已退出，连接失败")
+                self._failed_ips.add(node["ip"])
+                self.vpn_process = None
+                return False
 
             line = self.vpn_process.stdout.readline()
             if not line:
@@ -290,14 +291,43 @@ class VpnManager:
                 tun_dev = dev
             else:
                 self.log("无法从系统获取 VPN IP")
-                self._failed_ips.add(node["ip"])   # 标记失败 IP
+                self._failed_ips.add(node["ip"])
                 self.disconnect()
                 return False
-                    else:
-                        self.log("获取 VPN IP 失败，无法启动 SOCKS5 代理")
-                        self._failed_ips.add(node["ip"])   # 标记失败 IP
-                        self.disconnect()
-                        return False
+        else:
+            self.log("获取 VPN IP 失败，无法启动 SOCKS5 代理")
+            self._failed_ips.add(node["ip"])
+            self.disconnect()
+            return False
+
+        # 成功获取 IP 后的配置（不再缩进在 else 内）
+        self.tun_dev = tun_dev
+        self.tun_ip = tun_ip
+        self.vpn_gateway = vpn_gateway
+        self.health_fail_count = 0
+
+        self._setup_policy_routing(tun_ip, tun_dev)
+        time.sleep(1)
+        self.log(f"VPN 连接成功，本机 VPN IP: {tun_ip}, 接口: {tun_dev}, 网关: {vpn_gateway}")
+
+        socks_bind = "0.0.0.0"
+        socks_port = self.config["socks_port"]
+        max_conn = self.config.get("socks_max_connections", 200)
+        self.socks_server = Socks5Server(socks_bind, socks_port, tun_ip, max_connections=max_conn)
+        self.socks_server.start()
+
+        self.status["connected"] = True
+        self.status["node_info"] = node
+        self.status["socks"] = f"socks5://{self._get_host_ip()}:{socks_port}"
+        self.status["ip_info"] = self.detect_ip(node["ip"])
+        self.log(f"SOCKS5 代理已启动: {self.status['socks']}")
+
+        # 记录连接开始时间
+        self.status["connected_since"] = datetime.now(timezone.utc).isoformat()
+        self.log(f"已记录连接开始时间: {self.status['connected_since']}")
+        self.add_connection_record(node)
+        self._failed_ips.clear()
+        return True
 
         self.tun_dev = tun_dev
         self.tun_ip = tun_ip
