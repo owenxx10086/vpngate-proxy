@@ -462,8 +462,10 @@ class VpnManager:
         """通过 SOCKS5 代理访问自定义检测地址，任一成功即健康，支持重试与超时配置"""
         # 1. 检查进程和接口
         if not self.vpn_process or self.vpn_process.poll() is not None:
+            self.log("健康检测失败: OpenVPN 进程未运行")
             return False
         if not self.tun_dev or not self.tun_ip:
+            self.log("健康检测失败: tun 接口未分配 IP")
             return False
         try:
             ip_check = subprocess.run(
@@ -471,8 +473,10 @@ class VpnManager:
                 capture_output=True, text=True, timeout=5
             )
             if ip_check.returncode != 0 or self.tun_ip not in ip_check.stdout:
+                self.log("健康检测失败: tun 接口状态异常")
                 return False
-        except Exception:
+        except Exception as e:
+            self.log(f"健康检测失败: 检查 tun 接口异常 - {e}")
             return False
 
         # 2. 获取检测地址（优先用户自定义，否则使用默认轻量地址）
@@ -598,6 +602,7 @@ class VpnManager:
             # 先尝试优先节点
             if self._try_connect_preferred():
                 return
+            self.log("所有优先节点均不可用或已失效，尝试普通节点")
             nodes = self.filter_nodes(self.config["region"])
 
             # 检查是否开启同IP段优先
@@ -823,9 +828,11 @@ class VpnManager:
         for node in self.preferred_nodes:
             if self._stop_event.is_set():
                 break
-            if skip_ip and node["ip"] == skip_ip:   # 跳过当前连接的IP
+            if skip_ip and node["ip"] == skip_ip:
+                # 跳过当前连接的IP（不输出日志也可，但为了清晰可添加）
                 continue
             if node["ip"] in self._failed_ips:
+                self.log(f"跳过优先节点 {node['hostname']} ({node['ip']})：之前连接失败")
                 continue
             self.log(f"尝试连接优先节点: {node['hostname']} ({node['ip']})")
             self._failed_ips.add(node["ip"])
