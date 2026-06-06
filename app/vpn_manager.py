@@ -329,34 +329,6 @@ class VpnManager:
         self._failed_ips.clear()
         return True
 
-        self.tun_dev = tun_dev
-        self.tun_ip = tun_ip
-        self.vpn_gateway = vpn_gateway
-        self.health_fail_count = 0
-
-        self._setup_policy_routing(tun_ip, tun_dev)
-        time.sleep(1)
-        self.log(f"VPN 连接成功，本机 VPN IP: {tun_ip}, 接口: {tun_dev}, 网关: {vpn_gateway}")
-
-        socks_bind = "0.0.0.0"
-        socks_port = self.config["socks_port"]
-        max_conn = self.config.get("socks_max_connections", 200)
-        self.socks_server = Socks5Server(socks_bind, socks_port, tun_ip, max_connections=max_conn)
-        self.socks_server.start()
-
-        self.status["connected"] = True
-        self.status["node_info"] = node
-        self.status["socks"] = f"socks5://{self._get_host_ip()}:{socks_port}"
-        self.status["ip_info"] = self.detect_ip(node["ip"])
-        self.log(f"SOCKS5 代理已启动: {self.status['socks']}")
-
-        # 记录连接开始时间
-        self.status["connected_since"] = datetime.now(timezone.utc).isoformat()
-        self.log(f"已记录连接开始时间: {self.status['connected_since']}")
-        self.add_connection_record(node)
-        self._failed_ips.clear()
-        return True
-
     def disconnect(self):
         # 如果有连接开始时间，计算并记录使用时长
         if self.status.get("connected_since") and self.status.get("node_info"):
