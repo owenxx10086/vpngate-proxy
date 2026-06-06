@@ -214,6 +214,7 @@ class VpnManager:
             ovpn_content = base64.b64decode(config_b64).decode("utf-8")
         except Exception:
             self.log("解码 OpenVPN 配置失败")
+            self._failed_ips.add(node["ip"])   # 标记失败 IP
             return False
 
         auth_path = "/tmp/vpn_auth.txt"
@@ -238,6 +239,7 @@ class VpnManager:
             )
         except Exception as e:
             self.log(f"启动 OpenVPN 失败: {str(e)}")
+            self._failed_ips.add(node["ip"])   # 标记失败 IP
             return False
 
         tun_ip = None
@@ -247,11 +249,11 @@ class VpnManager:
         start_time = time.time()
         timeout = 25
 
-        while time.time() - start_time < timeout:
-            if self.vpn_process.poll() is not None:
-                self.log("OpenVPN 进程已退出，连接失败")
-                self.vpn_process = None
-                return False
+        if self.vpn_process.poll() is not None:
+            self.log("OpenVPN 进程已退出，连接失败")
+            self._failed_ips.add(node["ip"])   # 标记失败 IP
+            self.vpn_process = None
+            return False
 
             line = self.vpn_process.stdout.readline()
             if not line:
@@ -288,12 +290,14 @@ class VpnManager:
                 tun_dev = dev
             else:
                 self.log("无法从系统获取 VPN IP")
+                self._failed_ips.add(node["ip"])   # 标记失败 IP
                 self.disconnect()
                 return False
-        else:
-            self.log("获取 VPN IP 失败，无法启动 SOCKS5 代理")
-            self.disconnect()
-            return False
+                    else:
+                        self.log("获取 VPN IP 失败，无法启动 SOCKS5 代理")
+                        self._failed_ips.add(node["ip"])   # 标记失败 IP
+                        self.disconnect()
+                        return False
 
         self.tun_dev = tun_dev
         self.tun_ip = tun_ip
