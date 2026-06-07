@@ -228,7 +228,6 @@ class VpnManager:
 
             ovpn_content += "\nroute-nopull\n"
             ovpn_content += "\ndata-ciphers AES-256-GCM:AES-128-GCM:AES-128-CBC:CHACHA20-POLY1305\n"
-            ovpn_content += "\ntls-verify /bin/true\n"
 
             ovpn_path = "/tmp/vpn_config.ovpn"
             with open(ovpn_path, "w") as f:
