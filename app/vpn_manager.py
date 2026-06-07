@@ -52,7 +52,6 @@ class VpnManager:
         self.history_file = "/data/connection_history.json"
         self.connection_history = self._load_history()
         self._history_clean_thread = None
-        self._connect_lock = threading.RLock()
 
     def set_log_callback(self, cb):
         self._log_callback = cb
@@ -205,185 +204,182 @@ class VpnManager:
             self.log(f"清理策略路由失败: {e}")
 
     def connect_node(self, node):
-        with self._connect_lock:
-            self.disconnect()
-            time.sleep(0.5)
-            self.current_node = node
-            self.log(f"正在连接到节点: {node['hostname']} ({node['ip']})")
+        self.disconnect()
+        time.sleep(0.5)
+        self.current_node = node
+        self.log(f"正在连接到节点: {node['hostname']} ({node['ip']})")
 
-            try:
-                config_b64 = node["openvpn_config_base64"]
-                ovpn_content = base64.b64decode(config_b64).decode("utf-8")
-            except Exception:
-                self.log("解码 OpenVPN 配置失败")
+        try:
+            config_b64 = node["openvpn_config_base64"]
+            ovpn_content = base64.b64decode(config_b64).decode("utf-8")
+        except Exception:
+            self.log("解码 OpenVPN 配置失败")
+            self._failed_ips.add(node["ip"])
+            return False
+
+        auth_path = "/tmp/vpn_auth.txt"
+        with open(auth_path, "w") as f:
+            f.write(f"{self.config['vpn_user']}\n{self.config['vpn_pass']}\n")
+
+        if "auth-user-pass" not in ovpn_content:
+            ovpn_content += f"\nauth-user-pass {auth_path}\n"
+
+        ovpn_content += "\nroute-nopull\n"
+        ovpn_content += "\ndata-ciphers AES-256-GCM:AES-128-GCM:AES-128-CBC:CHACHA20-POLY1305\n"
+
+        ovpn_path = "/tmp/vpn_config.ovpn"
+        with open(ovpn_path, "w") as f:
+            f.write(ovpn_content)
+
+        try:
+            self.vpn_process = subprocess.Popen(
+                ["openvpn", "--config", ovpn_path],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, bufsize=1
+            )
+        except Exception as e:
+            self.log(f"启动 OpenVPN 失败: {str(e)}")
+            self._failed_ips.add(node["ip"])
+            return False
+
+        tun_ip = None
+        tun_dev = None
+        vpn_gateway = None
+        connected_flag = False
+        start_time = time.time()
+        timeout = 25
+
+        while time.time() - start_time < timeout:
+            if self.vpn_process.poll() is not None:
+                self.log("OpenVPN 进程已退出，连接失败")
                 self._failed_ips.add(node["ip"])
+                self.vpn_process = None
                 return False
 
-            auth_path = "/tmp/vpn_auth.txt"
-            with open(auth_path, "w") as f:
-                f.write(f"{self.config['vpn_user']}\n{self.config['vpn_pass']}\n")
+            line = self.vpn_process.stdout.readline()
+            if not line:
+                time.sleep(0.1)
+                continue
 
-            if "auth-user-pass" not in ovpn_content:
-                ovpn_content += f"\nauth-user-pass {auth_path}\n"
+            self.log(f"[OpenVPN] {line.strip()}")
 
-            ovpn_content += "\nroute-nopull\n"
-            ovpn_content += "\ndata-ciphers AES-256-GCM:AES-128-GCM:AES-128-CBC:CHACHA20-POLY1305\n"
+            if "Peer Connection Initiated" in line:
+                self.log("TLS 握手成功，等待配置...")
 
-            ovpn_path = "/tmp/vpn_config.ovpn"
-            with open(ovpn_path, "w") as f:
-                f.write(ovpn_content)
+            if "PUSH: Received control message: 'PUSH_REPLY" in line:
+                match = re.search(r"ifconfig (\d+\.\d+\.\d+\.\d+) (\d+\.\d+\.\d+\.\d+)", line)
+                if match:
+                    vpn_gateway = match.group(2)
+                    self.log(f"提取到 VPN 网关 IP: {vpn_gateway}")
 
-            try:
-                self.vpn_process = subprocess.Popen(
-                    ["openvpn", "--config", ovpn_path],
-                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                    text=True, bufsize=1
-                )
-            except Exception as e:
-                self.log(f"启动 OpenVPN 失败: {str(e)}")
-                self._failed_ips.add(node["ip"])
-                return False
+            if "Initialization Sequence Completed" in line:
+                connected_flag = True
+                self.log("OpenVPN 初始化完成")
+                break
 
-            tun_ip = None
-            tun_dev = None
-            vpn_gateway = None
-            connected_flag = False
-            start_time = time.time()
-            timeout = 25
+            if "net_addr_ptp_v4_add" in line:
+                match = re.search(r"net_addr_ptp_v4_add: (\d+\.\d+\.\d+\.\d+)", line)
+                if match:
+                    tun_ip = match.group(1)
+                    self.log(f"从 OpenVPN 日志获取到 VPN IP: {tun_ip}")
 
-            while time.time() - start_time < timeout:
-                # 防御并发导致的 vpn_process 被置为 None
-                if self.vpn_process is None or self.vpn_process.poll() is not None:
-                    self.log("OpenVPN 进程已退出或被意外终止，连接失败")
-                    self._failed_ips.add(node["ip"])
-                    self.vpn_process = None
-                    return False
-
-                line = self.vpn_process.stdout.readline()
-                if not line:
-                    time.sleep(0.1)
-                    continue
-
-                self.log(f"[OpenVPN] {line.strip()}")
-
-                if "Peer Connection Initiated" in line:
-                    self.log("TLS 握手成功，等待配置...")
-
-                if "PUSH: Received control message: 'PUSH_REPLY" in line:
-                    match = re.search(r"ifconfig (\d+\.\d+\.\d+\.\d+) (\d+\.\d+\.\d+\.\d+)", line)
-                    if match:
-                        vpn_gateway = match.group(2)
-                        self.log(f"提取到 VPN 网关 IP: {vpn_gateway}")
-
-                if "Initialization Sequence Completed" in line:
-                    connected_flag = True
-                    self.log("OpenVPN 初始化完成")
-                    break
-
-                if "net_addr_ptp_v4_add" in line:
-                    match = re.search(r"net_addr_ptp_v4_add: (\d+\.\d+\.\d+\.\d+)", line)
-                    if match:
-                        tun_ip = match.group(1)
-                        self.log(f"从 OpenVPN 日志获取到 VPN IP: {tun_ip}")
-
-            if connected_flag or tun_ip:
-                self.log("正在从系统获取 VPN 接口信息...")
-                ip, dev = self._get_tun_info()
-                if ip:
-                    tun_ip = ip
-                    tun_dev = dev
-                else:
-                    self.log("无法从系统获取 VPN IP")
-                    self._failed_ips.add(node["ip"])
-                    self.disconnect()
-                    return False
+        if connected_flag or tun_ip:
+            self.log("正在从系统获取 VPN 接口信息...")
+            ip, dev = self._get_tun_info()
+            if ip:
+                tun_ip = ip
+                tun_dev = dev
             else:
-                self.log("获取 VPN IP 失败，无法启动 SOCKS5 代理")
+                self.log("无法从系统获取 VPN IP")
                 self._failed_ips.add(node["ip"])
                 self.disconnect()
                 return False
+        else:
+            self.log("获取 VPN IP 失败，无法启动 SOCKS5 代理")
+            self._failed_ips.add(node["ip"])
+            self.disconnect()
+            return False
 
-            # 成功获取 IP 后的配置
-            self.tun_dev = tun_dev
-            self.tun_ip = tun_ip
-            self.vpn_gateway = vpn_gateway
-            self.health_fail_count = 0
+        # 成功获取 IP 后的配置（不再缩进在 else 内）
+        self.tun_dev = tun_dev
+        self.tun_ip = tun_ip
+        self.vpn_gateway = vpn_gateway
+        self.health_fail_count = 0
 
-            self._setup_policy_routing(tun_ip, tun_dev)
-            time.sleep(1)
-            self.log(f"VPN 连接成功，本机 VPN IP: {tun_ip}, 接口: {tun_dev}, 网关: {vpn_gateway}")
+        self._setup_policy_routing(tun_ip, tun_dev)
+        time.sleep(1)
+        self.log(f"VPN 连接成功，本机 VPN IP: {tun_ip}, 接口: {tun_dev}, 网关: {vpn_gateway}")
 
-            socks_bind = "0.0.0.0"
-            socks_port = self.config["socks_port"]
-            max_conn = self.config.get("socks_max_connections", 200)
-            self.socks_server = Socks5Server(socks_bind, socks_port, tun_ip, max_connections=max_conn)
-            self.socks_server.start()
+        socks_bind = "0.0.0.0"
+        socks_port = self.config["socks_port"]
+        max_conn = self.config.get("socks_max_connections", 200)
+        self.socks_server = Socks5Server(socks_bind, socks_port, tun_ip, max_connections=max_conn)
+        self.socks_server.start()
 
-            self.status["connected"] = True
-            self.status["node_info"] = node
-            self.status["socks"] = f"socks5://{self._get_host_ip()}:{socks_port}"
-            self.status["ip_info"] = self.detect_ip(node["ip"])
-            self.log(f"SOCKS5 代理已启动: {self.status['socks']}")
+        self.status["connected"] = True
+        self.status["node_info"] = node
+        self.status["socks"] = f"socks5://{self._get_host_ip()}:{socks_port}"
+        self.status["ip_info"] = self.detect_ip(node["ip"])
+        self.log(f"SOCKS5 代理已启动: {self.status['socks']}")
 
-            # 记录连接开始时间
-            self.status["connected_since"] = datetime.now(timezone.utc).isoformat()
-            self.log(f"已记录连接开始时间: {self.status['connected_since']}")
-            self.add_connection_record(node)
-            self._failed_ips.clear()
-            return True
+        # 记录连接开始时间
+        self.status["connected_since"] = datetime.now(timezone.utc).isoformat()
+        self.log(f"已记录连接开始时间: {self.status['connected_since']}")
+        self.add_connection_record(node)
+        self._failed_ips.clear()
+        return True
 
     def disconnect(self):
-        with self._connect_lock:
-            # 如果有连接开始时间，计算并记录使用时长
-            if self.status.get("connected_since") and self.status.get("node_info"):
+        # 如果有连接开始时间，计算并记录使用时长
+        if self.status.get("connected_since") and self.status.get("node_info"):
+            try:
+                start = datetime.fromisoformat(self.status["connected_since"])
+                duration = datetime.now(timezone.utc) - start
+                duration_str = str(duration).split('.')[0]   # 只保留到秒
+                hostname = self.status["node_info"].get("hostname", "")
+                ip = self.status["node_info"].get("ip", "")
+                self.log(f"节点 {hostname} ({ip}) 已断开，使用时长: {duration_str}")
+            except Exception as e:
+                self.log(f"记录使用时长异常: {e}")
+        self.status["connected_since"] = None
+
+        if self.status.get("node_info") and self.status["node_info"].get("ip"):
+            self.update_connection_record_end(self.status["node_info"]["ip"])
+
+        if self.tun_ip and self.tun_dev:
+            self._teardown_policy_routing(self.tun_ip, self.tun_dev)
+
+        if self.vpn_process:
+            self.log("断开当前连接...")
+            try:
+                self.vpn_process.terminate()
                 try:
-                    start = datetime.fromisoformat(self.status["connected_since"])
-                    duration = datetime.now(timezone.utc) - start
-                    duration_str = str(duration).split('.')[0]   # 只保留到秒
-                    hostname = self.status["node_info"].get("hostname", "")
-                    ip = self.status["node_info"].get("ip", "")
-                    self.log(f"节点 {hostname} ({ip}) 已断开，使用时长: {duration_str}")
-                except Exception as e:
-                    self.log(f"记录使用时长异常: {e}")
-            self.status["connected_since"] = None
-    
-            if self.status.get("node_info") and self.status["node_info"].get("ip"):
-                self.update_connection_record_end(self.status["node_info"]["ip"])
-    
-            if self.tun_ip and self.tun_dev:
-                self._teardown_policy_routing(self.tun_ip, self.tun_dev)
-    
-            if self.vpn_process:
-                self.log("断开当前连接...")
+                    self.vpn_process.stdout.close()   # 显式关闭管道，防止冲突
+                except Exception:
+                    pass
+                self.vpn_process.wait(timeout=3)
+            except Exception:
                 try:
-                    self.vpn_process.terminate()
+                    self.vpn_process.kill()
                     try:
-                        self.vpn_process.stdout.close()   # 显式关闭管道，防止冲突
+                        self.vpn_process.stdout.close()
                     except Exception:
                         pass
                     self.vpn_process.wait(timeout=3)
                 except Exception:
-                    try:
-                        self.vpn_process.kill()
-                        try:
-                            self.vpn_process.stdout.close()
-                        except Exception:
-                            pass
-                        self.vpn_process.wait(timeout=3)
-                    except Exception:
-                        pass
-                self.vpn_process = None
-                
-            if self.socks_server:
-                self.socks_server.stop()
-                self.socks_server = None
-            self.tun_dev = None
-            self.tun_ip = None
-            self.vpn_gateway = None
-            self.status["connected"] = False
-            self.status["node_info"] = {}
-            self.status["socks"] = ""
-            self.policy_routing_set = False
+                    pass
+            self.vpn_process = None
+            
+        if self.socks_server:
+            self.socks_server.stop()
+            self.socks_server = None
+        self.tun_dev = None
+        self.tun_ip = None
+        self.vpn_gateway = None
+        self.status["connected"] = False
+        self.status["node_info"] = {}
+        self.status["socks"] = ""
+        self.policy_routing_set = False
 
     def _get_host_ip(self):
         import socket
@@ -544,15 +540,11 @@ class VpnManager:
 
     def health_check_loop(self):
         while not self._stop_event.is_set():
-            time.sleep(self.health_check_interval)
-
-            # 如果未连接，立即开始无限重试
+            time.sleep(self.health_check_interval)          # 使用配置的间隔
             if not self.status["connected"]:
-                self.log("检测到未连接，开始无限重试...")
-                self._switch_to_next_available()
+                self.health_fail_count = 0
                 continue
 
-            # 已连接状态下的健康检测
             if self._is_tunnel_alive():
                 self.health_fail_count = 0
             else:
@@ -561,8 +553,7 @@ class VpnManager:
 
             if self.health_fail_count >= self.max_health_fails:
                 self.log(f"连续 {self.health_fail_count} 次健康检测失败，准备切换节点")
-                self.disconnect()
-                self._switch_to_next_available()   # 这个调用会无限重试直到成功
+                self._switch_to_next_available()
                 self.health_fail_count = 0
 
     def background_check_nodes(self):
@@ -602,88 +593,84 @@ class VpnManager:
             self.fetch_nodes()
 
     def _switch_to_next_available(self):
-        """无限重试直到连接成功，保留原全部逻辑"""
-        while not self._stop_event.is_set() and not self.status["connected"]:
-            if self._available_nodes:
-                next_node = self._available_nodes.pop(0)
-                self.log(f"切换到节点: {next_node['hostname']}")
-                if self.connect_node(next_node):
-                    return
-            else:
-                self.log("没有预先检测的可用节点，尝试从当前列表中选择...")
-                # 先尝试优先节点
-                if self._try_connect_preferred():
-                    return
-                self.log("所有优先节点均不可用或已失效，尝试普通节点")
-                nodes = self.filter_nodes(self.config["region"])
+        if self._available_nodes:
+            next_node = self._available_nodes.pop(0)
+            self.log(f"切换到节点: {next_node['hostname']}")
+            self.connect_node(next_node)
+        else:
+            self.log("没有预先检测的可用节点，尝试从当前列表中选择...")
+            # 先尝试优先节点
+            if self._try_connect_preferred():
+                return
+            self.log("所有优先节点均不可用或已失效，尝试普通节点")
+            nodes = self.filter_nodes(self.config["region"])
 
-                # 检查是否开启同IP段优先
-                prefer_same_subnet = self.config.get("prefer_same_subnet", False)
-                subnet_prefix = self.config.get("subnet_prefix_length", 24)
-                last_ip = None
-                if self.current_node and self.current_node.get("ip"):
-                    last_ip = self.current_node["ip"]
-                elif self.status["node_info"].get("ip"):
-                    last_ip = self.status["node_info"]["ip"]
+            # 检查是否开启同IP段优先
+            prefer_same_subnet = self.config.get("prefer_same_subnet", False)
+            subnet_prefix = self.config.get("subnet_prefix_length", 24)
+            last_ip = None
+            if self.current_node and self.current_node.get("ip"):
+                last_ip = self.current_node["ip"]
+            elif self.status["node_info"].get("ip"):
+                last_ip = self.status["node_info"]["ip"]
 
-                if prefer_same_subnet and last_ip:
-                    subnet_nodes = []
-                    other_nodes = []
-                    for node in nodes:
-                        if node["ip"] == last_ip:
-                            continue
-                        try:
-                            node_sub = self._get_subnet(node["ip"], subnet_prefix)
-                            last_sub = self._get_subnet(last_ip, subnet_prefix)
-                            if node_sub and last_sub and node_sub == last_sub:
-                                subnet_nodes.append(node)
-                            else:
-                                other_nodes.append(node)
-                        except Exception:
+            if prefer_same_subnet and last_ip:
+                subnet_nodes = []
+                other_nodes = []
+                for node in nodes:
+                    if node["ip"] == last_ip:
+                        continue
+                    try:
+                        node_sub = self._get_subnet(node["ip"], subnet_prefix)
+                        last_sub = self._get_subnet(last_ip, subnet_prefix)
+                        if node_sub and last_sub and node_sub == last_sub:
+                            subnet_nodes.append(node)
+                        else:
                             other_nodes.append(node)
+                    except Exception:
+                        other_nodes.append(node)
 
-                    # 优先尝试同子网节点
-                    for node in subnet_nodes:
-                        if self._stop_event.is_set():
-                            break
-                        if node["ip"] in self._failed_ips:
-                            continue
-                        self._failed_ips.add(node["ip"])
-                        self.log(f"优先同IP段尝试节点: {node['hostname']} ({node['ip']})")
-                        if self.test_node(node):
-                            if self.connect_node(node):
-                                return
-                    # 再尝试其他节点
-                    for node in other_nodes:
-                        if self._stop_event.is_set():
-                            break
-                        if node["ip"] in self._failed_ips:
-                            continue
-                        self._failed_ips.add(node["ip"])
-                        self.log(f"尝试节点: {node['hostname']} ({node['ip']})")
-                        if self.test_node(node):
-                            if self.connect_node(node):
-                                return
-                else:
-                    # 未开启优先，使用原有顺序逻辑
-                    for node in nodes:
-                        if self._stop_event.is_set():
-                            break
-                        if node["ip"] in self._failed_ips:
-                            continue
-                        if self.status["connected"] and node["ip"] == self.status["node_info"].get("ip"):
-                            continue
-                        self._failed_ips.add(node["ip"])
-                        self.log(f"尝试节点: {node['hostname']} ({node['ip']})")
-                        if self.test_node(node):
-                            if self.connect_node(node):
-                                return
-
-            # 所有节点都失败，清除失败记录，等待30秒后重试
-            if not self.status["connected"] and not self._stop_event.is_set():
-                self.log("所有节点均不可用，清除失败记录，30秒后重试")
-                self._failed_ips.clear()
-                self._stop_event.wait(30)
+                # 优先尝试同子网节点
+                for node in subnet_nodes:
+                    if self._stop_event.is_set():
+                        break
+                    if node["ip"] in self._failed_ips:
+                        continue
+                    self._failed_ips.add(node["ip"])
+                    self.log(f"优先同IP段尝试节点: {node['hostname']} ({node['ip']})")
+                    if self.test_node(node):
+                        success = self.connect_node(node)
+                        if success:
+                            return
+                # 再尝试其他节点
+                for node in other_nodes:
+                    if self._stop_event.is_set():
+                        break
+                    if node["ip"] in self._failed_ips:
+                        continue
+                    self._failed_ips.add(node["ip"])
+                    self.log(f"尝试节点: {node['hostname']} ({node['ip']})")
+                    if self.test_node(node):
+                        success = self.connect_node(node)
+                        if success:
+                            return
+                self.log("所有节点均不可用，等待下次检测")
+            else:
+                # 未开启优先，使用原有顺序逻辑
+                for node in nodes:
+                    if self._stop_event.is_set():
+                        break
+                    if node["ip"] in self._failed_ips:
+                        continue
+                    if self.status["connected"] and node["ip"] == self.status["node_info"].get("ip"):
+                        continue
+                    self._failed_ips.add(node["ip"])
+                    self.log(f"尝试节点: {node['hostname']} ({node['ip']})")
+                    if self.test_node(node):
+                        success = self.connect_node(node)
+                        if success:
+                            return
+                self.log("所有节点均不可用，等待下次检测")
 
     def auto_connect_next(self):
         """自动尝试优先节点，然后连接下一个节点（跳过当前节点，支持同IP段优先）"""
