@@ -540,11 +540,15 @@ class VpnManager:
 
     def health_check_loop(self):
         while not self._stop_event.is_set():
-            time.sleep(self.health_check_interval)          # 使用配置的间隔
+            time.sleep(self.health_check_interval)
+
+            # 如果未连接，立即开始无限重试
             if not self.status["connected"]:
-                self.health_fail_count = 0
+                self.log("检测到未连接，开始无限重试...")
+                self._ensure_connected()
                 continue
 
+            # 已连接状态下的健康检测
             if self._is_tunnel_alive():
                 self.health_fail_count = 0
             else:
@@ -553,7 +557,8 @@ class VpnManager:
 
             if self.health_fail_count >= self.max_health_fails:
                 self.log(f"连续 {self.health_fail_count} 次健康检测失败，准备切换节点")
-                self._switch_to_next_available()
+                self.disconnect()
+                self._ensure_connected()          # 无限重试直到连上
                 self.health_fail_count = 0
 
     def background_check_nodes(self):
@@ -591,86 +596,82 @@ class VpnManager:
             if current_interval <= 0:
                 continue
             self.fetch_nodes()
-
-    def _switch_to_next_available(self):
-        if self._available_nodes:
-            next_node = self._available_nodes.pop(0)
-            self.log(f"切换到节点: {next_node['hostname']}")
-            self.connect_node(next_node)
-        else:
-            self.log("没有预先检测的可用节点，尝试从当前列表中选择...")
-            # 先尝试优先节点
+                
+    def _ensure_connected(self):
+        """无限重试直到连接成功或收到停止信号（保留原全部优先级与子网逻辑）"""
+        while not self._stop_event.is_set() and not self.status["connected"]:
+            # 1. 优先连接用户设置的优先节点
             if self._try_connect_preferred():
+                self.log("已连接到优先节点")
                 return
-            self.log("所有优先节点均不可用或已失效，尝试普通节点")
-            nodes = self.filter_nodes(self.config["region"])
 
-            # 检查是否开启同IP段优先
-            prefer_same_subnet = self.config.get("prefer_same_subnet", False)
-            subnet_prefix = self.config.get("subnet_prefix_length", 24)
+            # 2. 尝试后台检测的预备节点
+            while self._available_nodes and not self._stop_event.is_set():
+                next_node = self._available_nodes.pop(0)
+                self.log(f"尝试预备节点: {next_node['hostname']} ({next_node['ip']})")
+                if self.connect_node(next_node):
+                    return
+
+            # 3. 从全量节点列表中选取（保留同网段优先、test_node 预检等）
+            nodes = self.filter_nodes(self.config["region"])
+            if not nodes:
+                # 没有节点，等待后重试
+                self.log("当前区域无可用节点，30秒后重试")
+                self._stop_event.wait(30)
+                continue
+
+            self.log("从全量节点列表中尝试连接...")
+
+            # 获取上次连接的 IP（用于跳过当前节点和同网段判断）
             last_ip = None
             if self.current_node and self.current_node.get("ip"):
                 last_ip = self.current_node["ip"]
             elif self.status["node_info"].get("ip"):
                 last_ip = self.status["node_info"]["ip"]
 
+            # 同网段优先逻辑（完全保留原 _switch_to_next_available 中的实现）
+            prefer_same_subnet = self.config.get("prefer_same_subnet", False)
+            subnet_prefix = self.config.get("subnet_prefix_length", 24)
+
+            # 构建候选节点列表（跳过当前 IP 和失败过的 IP）
+            candidates = []
+            for node in nodes:
+                if node["ip"] == last_ip:
+                    continue
+                if node["ip"] in self._failed_ips:
+                    continue
+                candidates.append(node)
+
+            # 如果开启同网段优先，进行排序
             if prefer_same_subnet and last_ip:
                 subnet_nodes = []
                 other_nodes = []
-                for node in nodes:
-                    if node["ip"] == last_ip:
-                        continue
-                    try:
-                        node_sub = self._get_subnet(node["ip"], subnet_prefix)
-                        last_sub = self._get_subnet(last_ip, subnet_prefix)
-                        if node_sub and last_sub and node_sub == last_sub:
-                            subnet_nodes.append(node)
-                        else:
-                            other_nodes.append(node)
-                    except Exception:
+                last_sub = self._get_subnet(last_ip, subnet_prefix)
+                for node in candidates:
+                    node_sub = self._get_subnet(node["ip"], subnet_prefix)
+                    if node_sub and last_sub and node_sub == last_sub:
+                        subnet_nodes.append(node)
+                    else:
                         other_nodes.append(node)
+                candidates = subnet_nodes + other_nodes
 
-                # 优先尝试同子网节点
-                for node in subnet_nodes:
-                    if self._stop_event.is_set():
-                        break
-                    if node["ip"] in self._failed_ips:
-                        continue
+            # 依次尝试候选节点（保留 test_node 预检）
+            for node in candidates:
+                if self._stop_event.is_set():
+                    break
+                if not self.test_node(node):
                     self._failed_ips.add(node["ip"])
-                    self.log(f"优先同IP段尝试节点: {node['hostname']} ({node['ip']})")
-                    if self.test_node(node):
-                        success = self.connect_node(node)
-                        if success:
-                            return
-                # 再尝试其他节点
-                for node in other_nodes:
-                    if self._stop_event.is_set():
-                        break
-                    if node["ip"] in self._failed_ips:
-                        continue
-                    self._failed_ips.add(node["ip"])
-                    self.log(f"尝试节点: {node['hostname']} ({node['ip']})")
-                    if self.test_node(node):
-                        success = self.connect_node(node)
-                        if success:
-                            return
-                self.log("所有节点均不可用，等待下次检测")
-            else:
-                # 未开启优先，使用原有顺序逻辑
-                for node in nodes:
-                    if self._stop_event.is_set():
-                        break
-                    if node["ip"] in self._failed_ips:
-                        continue
-                    if self.status["connected"] and node["ip"] == self.status["node_info"].get("ip"):
-                        continue
-                    self._failed_ips.add(node["ip"])
-                    self.log(f"尝试节点: {node['hostname']} ({node['ip']})")
-                    if self.test_node(node):
-                        success = self.connect_node(node)
-                        if success:
-                            return
-                self.log("所有节点均不可用，等待下次检测")
+                    continue
+                self._failed_ips.add(node["ip"])
+                self.log(f"尝试节点: {node['hostname']} ({node['ip']})")
+                if self.connect_node(node):
+                    return
+
+            # 所有候选节点均失败，清除失败记录并等待后重试（关键：无限重试）
+            if not self.status["connected"] and not self._stop_event.is_set():
+                self.log("所有节点均连接失败，清除失败记录，30秒后重试")
+                self._failed_ips.clear()
+                self._stop_event.wait(30)
 
     def auto_connect_next(self):
         """自动尝试优先节点，然后连接下一个节点（跳过当前节点，支持同IP段优先）"""
